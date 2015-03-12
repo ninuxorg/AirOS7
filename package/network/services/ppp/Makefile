@@ -189,10 +189,16 @@ define Package/ppp/install
 	$(INSTALL_DATA) ./files/etc/ppp/filter $(1)/etc/ppp/
 	$(INSTALL_DATA) ./files/etc/ppp/options $(1)/etc/ppp/
 	ln -sf /tmp/resolv.conf.ppp $(1)/etc/ppp/resolv.conf
-	$(INSTALL_DIR) $(1)/lib/netifd/proto
-	$(INSTALL_BIN) ./files/ppp.sh $(1)/lib/netifd/proto/
-	$(INSTALL_BIN) ./files/lib/netifd/ppp-up $(1)/lib/netifd/
-	$(INSTALL_BIN) ./files/lib/netifd/ppp-down $(1)/lib/netifd/
+	#$(INSTALL_DIR) $(1)/lib/netifd/proto
+	#$(INSTALL_BIN) ./files/ppp.sh $(1)/lib/netifd/proto/
+	#$(INSTALL_BIN) ./files/lib/netifd/ppp-up $(1)/lib/netifd/
+	#$(INSTALL_BIN) ./files/lib/netifd/ppp-down $(1)/lib/netifd/
+
+	$(INSTALL_BIN) ./files/etc/ppp/ip-up $(1)/etc/ppp/
+	$(INSTALL_BIN) ./files/etc/ppp/ip-down $(1)/etc/ppp/
+	$(INSTALL_BIN) ./files/etc/ppp/ipv6-up $(1)/etc/ppp/
+	$(INSTALL_BIN) ./files/etc/ppp/ipv6-down $(1)/etc/ppp/
+	
 endef
 Package/ppp-multilink/install=$(Package/ppp/install)
 

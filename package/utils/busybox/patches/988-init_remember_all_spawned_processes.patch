@@ -1,0 +1,11 @@
+--- busybox-1.19.4/init/init.c	2013-07-24 17:03:10.564771919 +0300
++++ busybox-1.19.4/init/init.c	2013-07-24 17:04:02.776004940 +0300
+@@ -924,7 +924,7 @@ static void reload_inittab(void)
+ 	 * removing them too saves a few bytes */
+ 	nextp = &init_action_list;
+ 	while ((a = *nextp) != NULL) {
+-		if ((a->action_type & ~SYSINIT) == 0) {
++		if (((a->action_type & ~SYSINIT) == 0) && a->pid == 0) {
+ 			*nextp = a->next;
+ 			free(a);
+ 		} else {

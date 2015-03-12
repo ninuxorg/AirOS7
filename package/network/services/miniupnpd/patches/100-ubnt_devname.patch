@@ -1,0 +1,119 @@
+Index: miniupnpd-1.8.20130426/miniupnpd.c
+===================================================================
+--- miniupnpd-1.8.20130426.orig/miniupnpd.c	2013-11-13 22:02:32.765115083 +0200
++++ miniupnpd-1.8.20130426/miniupnpd.c	2013-11-13 22:02:32.761115083 +0200
+@@ -823,6 +823,22 @@
+ 			case UPNPMINISSDPDSOCKET:
+ 				minissdpdsocketpath = ary_options[i].value;
+ 				break;
++                        /* UBNT Extentions */
++                        case UPNPFRIENDLYNAME:
++                                strncpy(friendlyname, ary_options[i].value, UBNT_EXT_MAX_LEN);
++                                break;
++                        case UPNPMANUFACTURER:
++                                strncpy(manufacturer, ary_options[i].value, UBNT_EXT_MAX_LEN);
++                                break;
++                        case UPNPMANUFACTURERURL:
++                                strncpy(manufacturerurl, ary_options[i].value, UBNT_EXT_MAX_LEN);
++                                break;
++                        case UPNPMODELNAME:
++                                strncpy(modelname, ary_options[i].value, UBNT_EXT_MAX_LEN);
++                                break;
++                        case UPNPMODELURL:
++                                strncpy(modelurl, ary_options[i].value, UBNT_EXT_MAX_LEN);
++                                break;
+ 			default:
+ 				fprintf(stderr, "Unknown option in file %s\n",
+ 				        optionsfile);
+Index: miniupnpd-1.8.20130426/options.c
+===================================================================
+--- miniupnpd-1.8.20130426.orig/options.c	2013-11-13 22:02:32.765115083 +0200
++++ miniupnpd-1.8.20130426/options.c	2013-11-13 22:02:32.761115083 +0200
+@@ -61,7 +61,13 @@
+ 	{ UPNPLEASEFILE, "lease_file"},
+ #endif
+ 	{ UPNPMINISSDPDSOCKET, "minissdpdsocket"},
+-	{ UPNPSECUREMODE, "secure_mode"}
++	{ UPNPSECUREMODE, "secure_mode"},
++        /* UBNT Extentions */
++        { UPNPFRIENDLYNAME, "friendlyname"},
++        { UPNPMANUFACTURER, "manufacturer"},
++        { UPNPMANUFACTURERURL, "manufacturerurl"},
++        { UPNPMODELNAME, "modelname"},
++        { UPNPMODELURL, "modelurl"},
+ };
+ 
+ int
+Index: miniupnpd-1.8.20130426/options.h
+===================================================================
+--- miniupnpd-1.8.20130426.orig/options.h	2013-11-13 22:02:32.765115083 +0200
++++ miniupnpd-1.8.20130426/options.h	2013-11-13 22:02:32.761115083 +0200
+@@ -49,7 +49,13 @@
+ 	UPNPLEASEFILE,			/* lease_file */
+ #endif
+ 	UPNPMINISSDPDSOCKET,	/* minissdpdsocket */
+-	UPNPENABLE				/* enable_upnp */
++	UPNPENABLE,				/* enable_upnp */
++        /* UBNT Extentions */
++        UPNPFRIENDLYNAME,
++        UPNPMANUFACTURER,
++        UPNPMANUFACTURERURL,
++        UPNPMODELNAME,
++        UPNPMODELURL,
+ };
+ 
+ /* readoptionsfile()
+Index: miniupnpd-1.8.20130426/upnpdescgen.c
+===================================================================
+--- miniupnpd-1.8.20130426.orig/upnpdescgen.c	2013-11-13 22:02:32.765115083 +0200
++++ miniupnpd-1.8.20130426/upnpdescgen.c	2013-11-13 22:04:04.113117203 +0200
+@@ -146,13 +146,13 @@
+ 	{"/deviceType", DEVICE_TYPE_IGD},
+ 		/* urn:schemas-upnp-org:device:InternetGatewayDevice:1 or 2 */
+ 	{"/friendlyName", friendly_name/*ROOTDEV_FRIENDLYNAME*/},	/* required */
+-	{"/manufacturer", ROOTDEV_MANUFACTURER},		/* required */
++	{"/manufacturer", manufacturer},		/* required */
+ /* 8 */
+-	{"/manufacturerURL", ROOTDEV_MANUFACTURERURL},	/* optional */
++	{"/manufacturerURL", manufacturerurl},	/* optional */
+ 	{"/modelDescription", ROOTDEV_MODELDESCRIPTION}, /* recommended */
+-	{"/modelName", ROOTDEV_MODELNAME},	/* required */
++	{"/modelName", modelname},	/* required */
+ 	{"/modelNumber", modelnumber},
+-	{"/modelURL", ROOTDEV_MODELURL},
++	{"/modelURL", modelurl},
+ 	{"/serialNumber", serialnumber},
+ 	{"/UDN", uuidvalue},	/* required */
+ 	/* see if /UPC is needed. */
+Index: miniupnpd-1.8.20130426/upnpglobalvars.c
+===================================================================
+--- miniupnpd-1.8.20130426.orig/upnpglobalvars.c	2013-11-13 22:02:32.765115083 +0200
++++ miniupnpd-1.8.20130426/upnpglobalvars.c	2013-11-13 22:05:45.545119557 +0200
+@@ -104,3 +104,9 @@
+ int ipv6fc_inbound_pinhole_allowed = 1;
+ #endif
+ 
++/* UBNT Extentions */
++char friendlyname[UBNT_EXT_MAX_LEN] = OS_NAME;
++char manufacturer[UBNT_EXT_MAX_LEN] = OS_NAME;
++char manufacturerurl[UBNT_EXT_MAX_LEN] = OS_URL;
++char modelname[UBNT_EXT_MAX_LEN] = OS_NAME;
++char modelurl[UBNT_EXT_MAX_LEN] = OS_URL;
+Index: miniupnpd-1.8.20130426/upnpglobalvars.h
+===================================================================
+--- miniupnpd-1.8.20130426.orig/upnpglobalvars.h	2013-11-13 22:02:32.765115083 +0200
++++ miniupnpd-1.8.20130426/upnpglobalvars.h	2013-11-13 22:04:48.405118231 +0200
+@@ -124,5 +124,13 @@
+ extern int ipv6fc_inbound_pinhole_allowed;
+ #endif
+ 
++/* UBNT Extentions */
++#define UBNT_EXT_MAX_LEN (64)
++extern char friendlyname[];
++extern char manufacturer[];
++extern char manufacturerurl[];
++extern char modelname[];
++extern char modelurl[];
++
+ #endif
+ 

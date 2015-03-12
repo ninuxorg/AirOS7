@@ -1,0 +1,46 @@
+--- a/src/drivers/driver_wext.c
++++ b/src/drivers/driver_wext.c
+@@ -1043,14 +1043,22 @@ int wpa_driver_wext_scan(void *priv, str
+ 
+ 	/* Not all drivers generate "scan completed" wireless event, so try to
+ 	 * read results after a timeout. */
+-	timeout = 10;
++	 /**
++	  * if we have a channel count - we assume to stay 300ms on channel,
++	  * and add 1 second "bonus" time
++	  **/
++	if (drv->num_channels)
++		timeout = drv->num_channels * 3 / 10 + 1;
++	if (timeout < 10)
++		timeout = 10;
+ 	if (drv->scan_complete_events) {
+ 		/*
+ 		 * The driver seems to deliver SIOCGIWSCAN events to notify
+ 		 * when scan is complete, so use longer timeout to avoid race
+ 		 * conditions with scanning and following association request.
+ 		 */
+-		timeout = 30;
++		if (timeout < 30)
++			timeout = 30;
+ 	}
+ 	wpa_printf(MSG_DEBUG, "Scan requested (ret=%d) - scan timeout %d "
+ 		   "seconds", ret, timeout);
+@@ -1580,6 +1588,8 @@ static int wpa_driver_wext_get_range(voi
+ 		wpa_printf(MSG_DEBUG, "  capabilities: key_mgmt 0x%x enc 0x%x "
+ 			   "flags 0x%x",
+ 			   drv->capa.key_mgmt, drv->capa.enc, drv->capa.flags);
++		drv->num_channels = range->num_channels;
++		wpa_printf(MSG_DEBUG, "  has %d available channels", drv->num_channels);
+ 	} else {
+ 		wpa_printf(MSG_DEBUG, "SIOCGIWRANGE: too old (short) data - "
+ 			   "assuming WPA is not supported");
+--- a/src/drivers/driver_wext.h
++++ b/src/drivers/driver_wext.h
+@@ -30,6 +30,7 @@ struct wpa_driver_wext_data {
+ 	struct wpa_driver_capa capa;
+ 	int has_capability;
+ 	int we_version_compiled;
++	unsigned int num_channels;
+ 
+ 	/* for set_auth_alg fallback */
+ 	int use_crypt;

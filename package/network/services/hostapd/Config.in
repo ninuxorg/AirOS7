@@ -40,8 +40,8 @@ config WPA_MSG_MIN_PRIORITY
 
 config DRIVER_WEXT_SUPPORT
 	bool
-	default n
+	default y
 
 config DRIVER_11N_SUPPORT
 	bool
-	default n
+	default y

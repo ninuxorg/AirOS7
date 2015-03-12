@@ -1,0 +1,41 @@
+Index: tinysnmp-0.8.5/agent/Makefile
+===================================================================
+--- tinysnmp-0.8.5.orig/agent/Makefile	2014-11-09 22:52:17.498674660 +0200
++++ tinysnmp-0.8.5/agent/Makefile	2014-11-09 22:52:38.269053624 +0200
+@@ -28,8 +28,8 @@
+ #  OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ #  OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ 
+-LDFLAGS = -rdynamic -Wl,-export-dynamic
+-LDLIBS = -ldebug -labz -lber -levent
++LDFLAGS += -rdynamic -Wl,-export-dynamic
++LDLIBS = -ldebug -labz -lber -levent_core
+ 
+ ifeq ($(shell uname -s),Linux)
+ LDLIBS += -ldl
+Index: tinysnmp-0.8.5/modules/ups/Makefile
+===================================================================
+--- tinysnmp-0.8.5.orig/modules/ups/Makefile	2014-11-09 22:52:17.498674660 +0200
++++ tinysnmp-0.8.5/modules/ups/Makefile	2014-11-09 22:52:17.494672648 +0200
+@@ -30,7 +30,7 @@
+ 
+ VERSION = $(shell pwd | sed 's|^.*/tinysnmp-\([^/]*\)/.*$$|\1|' | cut -f1 -d.)
+ 
+-CPPFLAGS = -DVERSION=\"$(VERSION)\" 
++CPPFLAGS += -DVERSION=\"$(VERSION)\" 
+ 
+ # path to toplevel directory from here
+ TOPDIR = ../..
+Index: tinysnmp-0.8.5/tools/snmp/Makefile
+===================================================================
+--- tinysnmp-0.8.5.orig/tools/snmp/Makefile	2014-11-09 22:52:17.498674660 +0200
++++ tinysnmp-0.8.5/tools/snmp/Makefile	2014-11-09 22:52:17.494672648 +0200
+@@ -28,7 +28,7 @@
+ #  OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ #  OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ 
+-LDFLAGS = -L$(TOPDIR)/manager
++LDFLAGS += -L$(TOPDIR)/manager
+ LDLIBS = -ldebug -labz -lber -lmanager
+ 
+ # path to toplevel directory from here

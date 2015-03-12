@@ -59,13 +59,13 @@ endif
 ifeq ($(CONFIG_TARGET_ROOTFS_INITRAMFS),y)
   ifeq ($(strip $(CONFIG_EXTERNAL_CPIO)),"")
     define Kernel/SetInitramfs/PreConfigure
-	grep -v -e INITRAMFS -e CONFIG_RD_ -e CONFIG_BLK_DEV_INITRD $(LINUX_DIR)/.config.old > $(LINUX_DIR)/.config
+	grep -v -e CONFIG_INITRAMFS -e CONFIG_RD_ -e CONFIG_BLK_DEV_INITRD $(LINUX_DIR)/.config.old > $(LINUX_DIR)/.config
 	echo 'CONFIG_BLK_DEV_INITRD=y' >> $(LINUX_DIR)/.config
 	echo 'CONFIG_INITRAMFS_SOURCE="$(strip $(TARGET_DIR) $(INITRAMFS_EXTRA_FILES))"' >> $(LINUX_DIR)/.config
     endef
   else
     define Kernel/SetInitramfs/PreConfigure
-	grep -v INITRAMFS $(LINUX_DIR)/.config.old > $(LINUX_DIR)/.config
+	grep -v 'CONFIG_INITRAMFS' $(LINUX_DIR)/.config.old > $(LINUX_DIR)/.config
 	echo 'CONFIG_INITRAMFS_SOURCE="$(call qstrip,$(CONFIG_EXTERNAL_CPIO))"' >> $(LINUX_DIR)/.config
     endef
   endif
@@ -140,7 +140,8 @@ endif
 endef
 
 define Kernel/CompileImage/Default
-	rm -f $(TARGET_DIR)/init
+	# $(if $(CONFIG_TARGET_ROOTFS_INITRAMFS),,rm -f $(TARGET_DIR)/init)
+	# rm -f $(TARGET_DIR)/init
 	+$(MAKE) $(KERNEL_MAKEOPTS) $(subst ",,$(KERNELNAME))
 	#")
 	$(call Kernel/CopyImage)

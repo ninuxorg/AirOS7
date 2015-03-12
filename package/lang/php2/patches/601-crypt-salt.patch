@@ -1,0 +1,45 @@
+--- a/src/crypt.c
++++ b/src/crypt.c
+@@ -44,14 +44,19 @@
+  * If mode is zero, a pseudo-random salt will be selected.
+  */
+ void Crypt(int mode) {
+ #ifdef HAVE_CRYPT
+ 	Stack *s;
+ 	char salt[8];
+ 	char *enc;
++	int i;
++	unsigned long seed[2];
++	const char *const seedchars =
++	    "VWXnopjk./0123YZabcdefghiIJKLMNOPQRST"
++	    "Ulm456789ABCDEFGHqrstuvwxyz";
+ 	
+ 	salt[0] = '\0';
+ 	if(mode) {
+ 		s = Pop();
+ 		if(!s) {
+ 			Error("Stack error in crypt");
+ 			return;
+@@ -60,16 +65,20 @@ void Crypt(int mode) {
+ 	} 
+ 	s = Pop();
+ 	if(!s) {
+ 		Error("Stack error in crypt");
+ 		return;
+ 	}
+ 	if(!salt[0]) {
+-		salt[0] = 'A' + (time(NULL) % 26);
+-		salt[1] = 'a' + (time(NULL) % 26);
++		seed[0] = time(NULL);
++		seed[1] = getpid() ^ (seed[0] >> 14 & 0x30000);
++		for (i = 0; i < 2; i++) {
++			salt[i] = seedchars[(seed[i/5] >> (i%5)*6) & 0x3f];
++		}
++		
+ 		salt[2] = '\0';
+ 	}
+ 	StripSlashes(s->strval);
+ 	enc = (char *)crypt(s->strval,salt);
+ #if DEBUG
+ 	Debug("Crypt returned [%s]\n",enc);
+ #endif

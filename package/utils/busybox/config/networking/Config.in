@@ -246,6 +246,12 @@ config BUSYBOX_CONFIG_FEATURE_FTPGETPUT_LONG_OPTIONS
 	help
 	  Support long options for the ftpget/ftpput applet.
 
+config BUSYBOX_CONFIG_GARP
+        bool "garp"
+        default n
+        help
+          Send gratuitous ARP
+
 config BUSYBOX_CONFIG_HOSTNAME
 	bool "hostname"
 	default BUSYBOX_DEFAULT_HOSTNAME
@@ -760,6 +766,12 @@ config BUSYBOX_CONFIG_PSCAN
 	default BUSYBOX_DEFAULT_PSCAN
 	help
 	  Simple network port scanner.
+
+config BUSYBOX_CONFIG_PWDOG
+	bool "pwdog"
+	default y
+	help
+	  Ping watchdog - ping to IP address and do reset if ping failed.
 
 config BUSYBOX_CONFIG_ROUTE
 	bool "route"

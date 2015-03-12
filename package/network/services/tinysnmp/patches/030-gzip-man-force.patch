@@ -1,0 +1,63 @@
+--- a/agent/Makefile
++++ b/agent/Makefile
+@@ -60,21 +60,21 @@ include $(TOPDIR)/rules.mk
+ install::
+ 	$(INSTALL) -d $(sbindir)
+ 	$(INSTALL) -c -m 0755 $(PRG) $(sbindir)
+ 	$(INSTALL) -d $(sysconfdir)
+ 	$(INSTALL) -c -m 0644 tinysnmp.conf $(sysconfdir)/tinysnmp.conf
+ 	$(INSTALL) -d $(mandir)/man8
+ 	$(INSTALL) -c -m 0644 $(PRG).8 $(mandir)/man8
+-	gzip -9 $(mandir)/man8/$(PRG).8
++	gzip -f9 $(mandir)/man8/$(PRG).8
+ 	$(INSTALL) -d $(mandir)/man5
+ 	$(INSTALL) -c -m 0644 tinysnmp.conf.5 $(mandir)/man5
+-	gzip -9 $(mandir)/man5/tinysnmp.conf.5
++	gzip -f9 $(mandir)/man5/tinysnmp.conf.5
+ 	$(INSTALL) -d $(mandir)/man3
+ 	$(INSTALL) -c -m 0644 tinysnmp-modules.3 $(mandir)/man3
+-	gzip -9 $(mandir)/man3/tinysnmp-modules.3
++	gzip -f9 $(mandir)/man3/tinysnmp-modules.3
+ 	$(INSTALL) -d $(datadir)/tinysnmp/mibs
+ 	$(INSTALL) -c -m 0644 $(TOPDIR)/mibs/SNMPv2-SMI.txt $(datadir)/tinysnmp/mibs
+ 	$(INSTALL) -c -m 0644 $(TOPDIR)/mibs/SNMPv2-TC.txt $(datadir)/tinysnmp/mibs
+ 	$(INSTALL) -c -m 0644 $(TOPDIR)/mibs/SNMPv2-CONF.txt $(datadir)/tinysnmp/mibs
+ 	$(INSTALL) -c -m 0644 $(TOPDIR)/mibs/SNMPv2-MIB.txt $(datadir)/tinysnmp/mibs
+ 
+ uninstall::
+--- a/tools/makeoid/Makefile
++++ b/tools/makeoid/Makefile
+@@ -51,13 +51,13 @@ include $(TOPDIR)/vars.mk
+ include $(TOPDIR)/rules.mk
+ 
+ install:: all
+ 	$(INSTALL) -d $(bindir)
+ 	$(INSTALL) -c -m 0755 $(PRG) $(bindir)
+ 	$(INSTALL) -d $(mandir)/man1
+ 	$(INSTALL) -c -m 0644 $(PRG).1 $(mandir)/man1
+-	gzip -9 $(mandir)/man1/$(PRG).1
++	gzip -9f $(mandir)/man1/$(PRG).1
+ 
+ uninstall::
+ 	$(RM) $(bindir)/$(PRG)
+ 	$(RM) $(mandir)/man1/$(PRG).1.gz
+ 
+--- a/tools/snmp/Makefile
++++ b/tools/snmp/Makefile
+@@ -60,15 +60,15 @@ include $(TOPDIR)/rules.mk
+ $(LNK): $(PRG)
+ 	ln -sf $^ $@
+ 
+ install:: all $(LNK)
+ 	$(INSTALL) -d $(bindir)
+ 	$(INSTALL) -c -m 0755 $(PRG) $(LNK) $(bindir)
+ 	$(INSTALL) -d $(mandir)/man1
+-	set -e; for F in $(MAN); do $(INSTALL) -c -m 0644 $$F $(mandir)/man1; gzip -9 $(mandir)/man1/$$F; done
++	set -e; for F in $(MAN); do $(INSTALL) -c -m 0644 $$F $(mandir)/man1; gzip -9f $(mandir)/man1/$$F; done
+ 
+ uninstall::
+ 	$(RM) $(bindir)/$(PRG)
+ 	set -e; for F in $(LNK); do $(RM) $(bindir)/$$F; done
+ 	set -e; for F in $(MAN); do $(RM) $(mandir)/man1/$$F.gz; done
+ 
+ clean::

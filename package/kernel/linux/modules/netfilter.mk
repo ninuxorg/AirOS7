@@ -18,7 +18,7 @@ define KernelPackage/ipt-core
 	CONFIG_NETFILTER_ADVANCED=y \
 	$(KCONFIG_IPT_CORE)
   FILES:=$(foreach mod,$(IPT_CORE-m),$(LINUX_DIR)/net/$(mod).ko)
-  AUTOLOAD:=$(call AutoProbe,$(notdir $(IPT_CORE-m)))
+  AUTOLOAD:=$(call AutoLoad,40,$(notdir $(IPT_CORE-m)))
 endef
 
 define KernelPackage/ipt-core/description
@@ -46,7 +46,7 @@ define KernelPackage/ipt-conntrack
   TITLE:=Basic connection tracking modules
   KCONFIG:=$(KCONFIG_IPT_CONNTRACK)
   FILES:=$(foreach mod,$(IPT_CONNTRACK-m),$(LINUX_DIR)/net/$(mod).ko)
-  AUTOLOAD:=$(call AutoProbe,$(notdir $(IPT_CONNTRACK-m)))
+  AUTOLOAD:=$(call AutoLoad,41,$(notdir $(IPT_CONNTRACK-m)))
   $(call AddDepends/ipt)
 endef
 
@@ -67,7 +67,7 @@ define KernelPackage/ipt-conntrack-extra
   TITLE:=Extra connection tracking modules
   KCONFIG:=$(KCONFIG_IPT_CONNTRACK_EXTRA)
   FILES:=$(foreach mod,$(IPT_CONNTRACK_EXTRA-m),$(LINUX_DIR)/net/$(mod).ko)
-  AUTOLOAD:=$(call AutoProbe,$(notdir $(IPT_CONNTRACK_EXTRA-m)))
+  AUTOLOAD:=$(call AutoLoad,41,$(notdir $(IPT_CONNTRACK_EXTRA-m)))
   $(call AddDepends/ipt,+kmod-ipt-conntrack)
 endef
 
@@ -88,7 +88,7 @@ define KernelPackage/ipt-filter
   TITLE:=Modules for packet content inspection
   KCONFIG:=$(KCONFIG_IPT_FILTER)
   FILES:=$(foreach mod,$(IPT_FILTER-m),$(LINUX_DIR)/net/$(mod).ko)
-  AUTOLOAD:=$(call AutoProbe,$(notdir $(IPT_FILTER-m)))
+  AUTOLOAD:=$(call AutoLoad,45,$(notdir $(IPT_FILTER-m)))
   $(call AddDepends/ipt,+kmod-lib-textsearch +kmod-ipt-conntrack)
 endef
 
@@ -106,7 +106,7 @@ define KernelPackage/ipt-ipopt
   TITLE:=Modules for matching/changing IP packet options
   KCONFIG:=$(KCONFIG_IPT_IPOPT)
   FILES:=$(foreach mod,$(IPT_IPOPT-m),$(LINUX_DIR)/net/$(mod).ko)
-  AUTOLOAD:=$(call AutoProbe,$(notdir $(IPT_IPOPT-m)))
+  AUTOLOAD:=$(call AutoLoad,45,$(notdir $(IPT_IPOPT-m)))
   $(call AddDepends/ipt)
 endef
 
@@ -152,7 +152,7 @@ define KernelPackage/ipt-nat
   TITLE:=Basic NAT targets
   KCONFIG:=$(KCONFIG_IPT_NAT)
   FILES:=$(foreach mod,$(IPT_NAT-m),$(LINUX_DIR)/net/$(mod).ko)
-  AUTOLOAD:=$(call AutoProbe,$(notdir $(IPT_NAT-m)))
+  AUTOLOAD:=$(call AutoLoad,42,$(notdir $(IPT_NAT-m)))
   $(call AddDepends/ipt,+kmod-ipt-conntrack)
 endef
 
@@ -186,7 +186,7 @@ define KernelPackage/ipt-nat-extra
   TITLE:=Extra NAT targets
   KCONFIG:=$(KCONFIG_IPT_NAT_EXTRA)
   FILES:=$(foreach mod,$(IPT_NAT_EXTRA-m),$(LINUX_DIR)/net/$(mod).ko)
-  AUTOLOAD:=$(call AutoProbe,$(notdir $(IPT_NAT_EXTRA-m)))
+  AUTOLOAD:=$(call AutoLoad,42,$(notdir $(IPT_NAT_EXTRA-m)))
   $(call AddDepends/ipt,+kmod-ipt-nat)
 endef
 
@@ -204,7 +204,7 @@ define KernelPackage/ipt-nathelper
   TITLE:=Basic Conntrack and NAT helpers
   KCONFIG:=$(KCONFIG_IPT_NATHELPER)
   FILES:=$(foreach mod,$(IPT_NATHELPER-m),$(LINUX_DIR)/net/$(mod).ko)
-  AUTOLOAD:=$(call AutoProbe,$(notdir $(IPT_NATHELPER-m)))
+  AUTOLOAD:=$(call AutoLoad,45,$(notdir $(IPT_NATHELPER-m)))
   $(call AddDepends/ipt,+kmod-ipt-nat)
 endef
 
@@ -223,7 +223,7 @@ define KernelPackage/ipt-nathelper-extra
   TITLE:=Extra Conntrack and NAT helpers
   KCONFIG:=$(KCONFIG_IPT_NATHELPER_EXTRA)
   FILES:=$(foreach mod,$(IPT_NATHELPER_EXTRA-m),$(LINUX_DIR)/net/$(mod).ko)
-  AUTOLOAD:=$(call AutoProbe,$(notdir $(IPT_NATHELPER_EXTRA-m)))
+  AUTOLOAD:=$(call AutoLoad,45,$(notdir $(IPT_NATHELPER_EXTRA-m)))
   $(call AddDepends/ipt,+kmod-ipt-nat +kmod-lib-textsearch)
 endef
 
@@ -356,7 +356,7 @@ define KernelPackage/ipt-u32
   FILES:= \
   	$(LINUX_DIR)/net/netfilter/xt_u32.ko \
   	$(foreach mod,$(IPT_U32-m),$(LINUX_DIR)/net/$(mod).ko)
-  AUTOLOAD:=$(call AutoProbe,$(notdir nf_tee $(IPT_U32-m)))
+  AUTOLOAD:=$(call AutoLoad,45,$(notdir nf_tee $(IPT_U32-m)))
   $(call AddDepends/ipt)
 endef
 
@@ -442,11 +442,12 @@ $(eval $(call KernelPackage,arptables))
 define KernelPackage/ebtables
   SUBMENU:=$(NF_MENU)
   TITLE:=Bridge firewalling modules
-  DEPENDS:=+kmod-ipt-core +kmod-bridge
+  DEPENDS:=+kmod-ipt-core +kmod-bridge +kmod-lib-crc16
   FILES:=$(foreach mod,$(EBTABLES-m),$(LINUX_DIR)/net/$(mod).ko)
   KCONFIG:=CONFIG_BRIDGE_NETFILTER=y \
 	$(KCONFIG_EBTABLES)
-  AUTOLOAD:=$(call AutoProbe,$(notdir $(EBTABLES-m)))
+  AUTOLOAD:=$(call AutoLoad,49,$(notdir $(EBTABLES-m)))
+  $(call AddDepends/crc16)
 endef
 
 define KernelPackage/ebtables/description
@@ -468,7 +469,7 @@ define KernelPackage/ebtables-ipv4
   TITLE:=ebtables: IPv4 support
   FILES:=$(foreach mod,$(EBTABLES_IP4-m),$(LINUX_DIR)/net/$(mod).ko)
   KCONFIG:=$(KCONFIG_EBTABLES_IP4)
-  AUTOLOAD:=$(call AutoProbe,$(notdir $(EBTABLES_IP4-m)))
+  AUTOLOAD:=$(call AutoLoad,45,$(notdir $(EBTABLES_IP4-m)))
   $(call AddDepends/ebtables)
 endef
 
@@ -484,7 +485,7 @@ define KernelPackage/ebtables-ipv6
   TITLE:=ebtables: IPv6 support
   FILES:=$(foreach mod,$(EBTABLES_IP6-m),$(LINUX_DIR)/net/$(mod).ko)
   KCONFIG:=$(KCONFIG_EBTABLES_IP6)
-  AUTOLOAD:=$(call AutoProbe,$(notdir $(EBTABLES_IP6-m)))
+  AUTOLOAD:=$(call AutoLoad,45,$(notdir $(EBTABLES_IP6-m)))
   $(call AddDepends/ebtables)
 endef
 

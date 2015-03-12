@@ -1,0 +1,60 @@
+--- a/src/drivers/driver_wext.c
++++ b/src/drivers/driver_wext.c
+@@ -743,11 +743,13 @@ static void wpa_driver_wext_rfkill_unblo
+ {
+ 	struct wpa_driver_wext_data *drv = ctx;
+ 	wpa_printf(MSG_DEBUG, "WEXT: RFKILL unblocked");
++#ifdef CONFIG_IFACE_DOWN_CONTROL
+ 	if (linux_set_iface_flags(drv->ioctl_sock, drv->ifname, 1)) {
+ 		wpa_printf(MSG_DEBUG, "WEXT: Could not set interface UP "
+ 			   "after rfkill unblock");
+ 		return;
+ 	}
++#endif
+ 	/* rtnetlink ifup handler will report interface as enabled */
+ }
+ 
+@@ -874,18 +876,22 @@ static int wpa_driver_wext_finish_drv_in
+ {
+ 	int send_rfkill_event = 0;
+ 
+-	if (linux_set_iface_flags(drv->ioctl_sock, drv->ifname, 1) < 0) {
+-		if (rfkill_is_blocked(drv->rfkill)) {
+-			wpa_printf(MSG_DEBUG, "WEXT: Could not yet enable "
+-				   "interface '%s' due to rfkill",
+-				   drv->ifname);
+-			drv->if_disabled = 1;
+-			send_rfkill_event = 1;
+-		} else {
+-			wpa_printf(MSG_ERROR, "WEXT: Could not set "
+-				   "interface '%s' UP", drv->ifname);
+-			return -1;
++	if (!linux_iface_up(drv->ioctl_sock, drv->ifname)) {
++#ifdef CONFIG_IFACE_DOWN_CONTROL
++		if (linux_set_iface_flags(drv->ioctl_sock, drv->ifname, 1) < 0) {
++			if (rfkill_is_blocked(drv->rfkill)) {
++				wpa_printf(MSG_DEBUG, "WEXT: Could not yet enable "
++						"interface '%s' due to rfkill",
++						drv->ifname);
++				drv->if_disabled = 1;
++				send_rfkill_event = 1;
++			} else {
++				wpa_printf(MSG_ERROR, "WEXT: Could not set "
++						"interface '%s' UP", drv->ifname);
++				return -1;
++			}
+ 		}
++#endif
+ 	}
+ 
+ 	/*
+@@ -967,7 +973,9 @@ void wpa_driver_wext_deinit(void *priv)
+ 	if (drv->mlme_sock >= 0)
+ 		eloop_unregister_read_sock(drv->mlme_sock);
+ 
++#ifdef CONFIG_IFACE_DOWN_CONTROL
+ 	(void) linux_set_iface_flags(drv->ioctl_sock, drv->ifname, 0);
++#endif /* CONFIG_IFACE_DOWN_CONTROL */
+ 
+ 	close(drv->ioctl_sock);
+ 	if (drv->mlme_sock >= 0)

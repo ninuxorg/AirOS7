@@ -1,0 +1,94 @@
+--- a/src/memory.c
++++ b/src/memory.c
+@@ -50,14 +50,81 @@
+ 		fprintf(stderr,fmt,##args);						\
+ 		fflush(stderr);									\
+ 	} while (0)
+ #else	/* #ifdef DEBUG_MEM */
+ #define DPRINTF(fmt,args...)
+ #endif	/* #ifdef DEBUG_MEM */
+ 
++#ifndef DEBUG_MEM_TRACK_ON
++
++static void (*fail_stub)(const char *fmt,...);
++
++static void *xmalloc (const char *file,int line,const char *function,size_t size)
++{
++   void *ptr;
++
++   if ((ptr = malloc (size)) == NULL)
++	 fail_stub ("malloc(size: %u): %m\n"
++				"Attempted allocation in file \"%s\" at line %d in function %s()\n",
++				size,
++				file,line,function);
++
++   return (ptr);
++}
++
++static void *xrealloc (const char *file,int line,const char *function,void *ptr,size_t size)
++{
++   void *ptr2;
++
++   if ((ptr2 = realloc (ptr,size)) == NULL)
++	 fail_stub ("realloc(ptr: %p, size: %u): %m\n"
++				"Attempted allocation in file \"%s\" at line %d in function %s()\n",
++				ptr,size,
++				file,line,function);
++
++   return (ptr2);
++}
++
++static void fail_default_stub (const char *fmt, ...)
++{
++   va_list ap;
++   va_start (ap,fmt);
++   if (fmt != NULL) log_vprintf (LOG_ERROR,fmt,ap);
++   va_end (ap);
++   exit (EXIT_FAILURE);
++}
++
++void mem_open (void (*fail)(const char *fmt,...)) {
++   fail_stub = fail != NULL ? fail : fail_default_stub;
++}
++
++void mem_check_stub (const char *file,int line,const char *function) {
++    //empty
++}
++
++void *mem_alloc_stub (size_t size,const char *file,int line,const char *function) {
++    size = (size + 3) & (~3);	/* align on dword boundary */
++    return xmalloc (file,line,function,size);
++}
++
++void *mem_realloc_stub (void *ptr,size_t size,const char *file,int line,const char *function) {
++   if (ptr == NULL) return (mem_alloc_stub (size,file,line,function));
++   size = (size + 3) & (~3);  /* align on dword boundary */
++   return xrealloc (file,line,function,ptr,size);
++}
++
++void mem_free_stub (void *ptr,const char *file,int line,const char *function) {
++    free(ptr);
++}
++
++void mem_close (void) {
++    fail_stub (NULL);
++}
++
++#else //DEBUG_MEM_TRACK_ON
+ /* signature for detecting overwrites */
+ #define MEM_SIGNATURE (('M' << 24) | ('L' << 16) | ('D' << 8) | 'S')
+ 
+ typedef struct mem_node
+ {
+    uint32_t *head_sig;
+    const char *file;
+@@ -323,8 +388,8 @@ void mem_close (void)
+ 			 free (mem_areas);
+ 			 mem_areas = tmp;
+ 		  }
+ 
+ 		fail_stub (NULL);
+ 	 }
+ }
+-
++#endif //DEBUG_MEM_TRACK_ON

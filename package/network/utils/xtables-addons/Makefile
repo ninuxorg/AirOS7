@@ -100,7 +100,7 @@ define BuildTemplate
     DEPENDS:=+kmod-ipt-core $(5)
     KCONFIG:=$(6)
     FILES:=$(foreach mod,$(4),$(PKG_BUILD_DIR)/extensions/$(mod).$(LINUX_KMOD_SUFFIX))
-    AUTOLOAD:=$(call AutoProbe,$(notdir $(4)))
+    AUTOLOAD:=$(call AutoLoad,45,$(notdir $(4)))
   endef
 
   $$(eval $$(call KernelPackage,ipt-$(1)))

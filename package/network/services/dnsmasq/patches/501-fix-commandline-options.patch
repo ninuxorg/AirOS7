@@ -1,0 +1,13 @@
+--- a/src/option.c
++++ b/src/option.c
+@@ -1316,8 +1316,8 @@ static int one_opt(int option, char *arg
+ 	   {
+ 	     if ((rept & EXT_OPT) && (rept & ~EXT_OPT))
+ 		 daemon->ext_options |= (rept & ~EXT_OPT);
+-             else
+-		 daemon->options |= rept;
++		 else
++			 set_option_bool(rept);
+ 	     return 1;
+ 	   }
+        

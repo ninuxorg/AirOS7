@@ -1,0 +1,21 @@
+Index: busybox-1.19.4/init/init.c
+===================================================================
+--- busybox-1.19.4.orig/init/init.c
++++ busybox-1.19.4/init/init.c
+@@ -129,7 +129,7 @@
+  * not fully functional init by switching it on! */
+ #define DEBUG_INIT 0
+ 
+-#define COMMAND_SIZE      256
++#define COMMAND_SIZE      512
+ #define CONSOLE_NAME_SIZE 32
+ 
+ /* Default sysinit script. */
+@@ -442,6 +442,7 @@
+ {
+ 	pid_t pid;
+ 
++	message(L_LOG, "Run: %s\n", a->command);
+ 	/* Careful: don't be affected by a signal in vforked child */
+ 	sigprocmask_allsigs(SIG_BLOCK);
+ 	if (BB_MMU && (a->action_type & ASKFIRST))

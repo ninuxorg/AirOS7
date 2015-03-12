@@ -1,0 +1,18 @@
+--- a/modules/resources/main.c
++++ b/modules/resources/main.c
+@@ -244,15 +244,14 @@ static int res_open (void)
+    return (load_create (&load));
+ }
+ 
+ static int res_update (struct odb **odb)
+ {
+    if (memory_update (odb) ||
+ 	   swap_update (odb) ||
+-	   storage_update (odb) ||
+ 	   _load_update (odb))
+ 	 return (-1);
+ 
+    return (0);
+ }
+ 
+ static void res_close (void)

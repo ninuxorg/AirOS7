@@ -1,0 +1,20 @@
+--- a/src/drivers/driver_wext.c
++++ b/src/drivers/driver_wext.c
+@@ -36,7 +36,7 @@ static int wpa_driver_wext_get_range(voi
+ static int wpa_driver_wext_finish_drv_init(struct wpa_driver_wext_data *drv);
+ static void wpa_driver_wext_disconnect(struct wpa_driver_wext_data *drv);
+ static int wpa_driver_wext_set_auth_alg(void *priv, int auth_alg);
+-
++static int wpa_driver_wext_set_gen_ie(void *priv, const u8 *ie, size_t ie_len);
+ 
+ int wpa_driver_wext_set_auth_param(struct wpa_driver_wext_data *drv,
+ 				   int idx, u32 value)
+@@ -949,6 +949,8 @@ void wpa_driver_wext_deinit(void *priv)
+ 	struct wpa_driver_wext_data *drv = priv;
+ 
+ 	wpa_driver_wext_set_auth_param(drv, IW_AUTH_WPA_ENABLED, 0);
++	/* clean previuosly set optie */
++	wpa_driver_wext_set_gen_ie(drv, NULL, 0);
+ 
+ 	eloop_cancel_timeout(wpa_driver_wext_scan_timeout, drv, drv->ctx);
+ 

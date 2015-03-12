@@ -1,0 +1,25 @@
+--- a/networking/zcip.c
++++ b/networking/zcip.c
+@@ -226,10 +226,11 @@ int zcip_main(int argc UNUSED_PARAM, cha
+ 
+ #define FOREGROUND (opts & 1)
+ #define QUIT       (opts & 2)
++#define NODELAY    (opts & 16) //UBNT: skip 5 sec. delay if "-n" option is specified
+ 	// parse commandline: prog [options] ifname script
+ 	// exactly 2 args; -v accumulates and implies -f
+ 	opt_complementary = "=2:vv:vf";
+-	opts = getopt32(argv, "fqr:v", &r_opt, &verbose);
++	opts = getopt32(argv, "fqr:vn", &r_opt, &verbose);
+ #if !BB_MMU
+ 	// on NOMMU reexec early (or else we will rerun things twice)
+ 	if (!FOREGROUND)
+@@ -266,6 +267,9 @@ int zcip_main(int argc UNUSED_PARAM, cha
+ 	if (run(argv, "init", NULL))
+ 		return EXIT_FAILURE;
+ 
++	//UBNT: Make sure, that all available interfaces are up and running
++	if (!NODELAY) sleep(5);
++
+ 	// initialize saddr
+ 	// saddr is: { u16 sa_family; u8 sa_data[14]; }
+ 	//memset(&saddr, 0, sizeof(saddr));

@@ -60,6 +60,9 @@ ifeq ($(CONFIG_SQUASHFS_XZ),y)
   endif
   SQUASHFSCOMP := xz $(LZMA_XZ_OPTIONS) $(BCJ_FILTER)
 endif
+ifeq ($(SQUASHFSCOMP),)
+  SQUASHFSCOMP := gzip
+endif
 
 JFFS2_BLOCKSIZE ?= 64k 128k
 
@@ -206,11 +209,11 @@ endif
 
 define Image/mkfs/prepare/default
 	# Use symbolic permissions to avoid clobbering SUID/SGID/sticky bits
-	- $(FIND) $(TARGET_DIR) -type f -not -perm +0100 -not -name 'ssh_host*' -not -name 'shadow' -print0 | $(XARGS) -0 chmod u+rw,g+r,o+r
-	- $(FIND) $(TARGET_DIR) -type f -perm +0100 -print0 | $(XARGS) -0 chmod u+rwx,g+rx,o+rx
+	- $(FIND) $(TARGET_DIR) -type f -not -perm /0100 -not -name 'ssh_host*' -not -name 'shadow' -print0 | $(XARGS) -0 chmod u+rw,g+r,o+r
+	- $(FIND) $(TARGET_DIR) -type f -perm /0100 -not -name '*.cgi' -print0 | $(XARGS) -0 chmod u+rwx,g+rx,o+rx
 	- $(FIND) $(TARGET_DIR) -type d -print0 | $(XARGS) -0 chmod u+rwx,g+rx,o+rx
-	$(INSTALL_DIR) $(TARGET_DIR)/tmp
-	chmod 1777 $(TARGET_DIR)/tmp
+	# $(INSTALL_DIR) $(TARGET_DIR)/tmp
+	# chmod 1777 $(TARGET_DIR)/tmp
 endef
 
 define Image/mkfs/prepare

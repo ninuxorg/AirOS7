@@ -32,7 +32,7 @@
  
  
  static int hostapd_cli_cmd_disassoc_imminent(struct wpa_ctrl *ctrl, int argc,
-@@ -979,7 +975,6 @@ static struct hostapd_cli_cmd hostapd_cl
+@@ -913,7 +909,6 @@ static struct hostapd_cli_cmd hostapd_cl
  #ifdef CONFIG_IEEE80211W
  	{ "sa_query", hostapd_cli_cmd_sa_query },
  #endif /* CONFIG_IEEE80211W */
@@ -40,7 +40,7 @@
  	{ "wps_pin", hostapd_cli_cmd_wps_pin },
  	{ "wps_check_pin", hostapd_cli_cmd_wps_check_pin },
  	{ "wps_pbc", hostapd_cli_cmd_wps_pbc },
-@@ -993,7 +988,6 @@ static struct hostapd_cli_cmd hostapd_cl
+@@ -927,7 +922,6 @@ static struct hostapd_cli_cmd hostapd_cl
  	{ "wps_ap_pin", hostapd_cli_cmd_wps_ap_pin },
  	{ "wps_config", hostapd_cli_cmd_wps_config },
  	{ "wps_get_status", hostapd_cli_cmd_wps_get_status },

@@ -1,0 +1,28 @@
+Index: hostapd-2.1/src/ap/accounting.c
+===================================================================
+--- hostapd-2.1.orig/src/ap/accounting.c
++++ hostapd-2.1/src/ap/accounting.c
+@@ -206,11 +206,6 @@ void accounting_sta_start(struct hostapd
+ 	if (sta->acct_session_started)
+ 		return;
+ 
+-	hostapd_logger(hapd, sta->addr, HOSTAPD_MODULE_RADIUS,
+-		       HOSTAPD_LEVEL_INFO,
+-		       "starting accounting session %08X-%08X",
+-		       sta->acct_session_id_hi, sta->acct_session_id_lo);
+-
+ 	os_get_reltime(&sta->acct_session_start);
+ 	sta->last_rx_bytes = sta->last_tx_bytes = 0;
+ 	sta->acct_input_gigawords = sta->acct_output_gigawords = 0;
+@@ -219,6 +214,11 @@ void accounting_sta_start(struct hostapd
+ 	if (!hapd->conf->radius->acct_server)
+ 		return;
+ 
++	hostapd_logger(hapd, sta->addr, HOSTAPD_MODULE_RADIUS,
++		       HOSTAPD_LEVEL_INFO,
++		       "starting accounting session %08X-%08X",
++		       sta->acct_session_id_hi, sta->acct_session_id_lo);
++
+ 	if (sta->acct_interim_interval)
+ 		interval = sta->acct_interim_interval;
+ 	else

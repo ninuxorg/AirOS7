@@ -58,6 +58,10 @@ define Package/dropbearconvert
   TITLE:=Utility for converting SSH keys
 endef
 
+CFLAGS += -DDSS_PRIV_FILENAME=\"/etc/persistent/dropbear_dss_host_key\" \
+	      -DRSA_PRIV_FILENAME=\"/etc/persistent/dropbear_rsa_host_key\" \
+	      -DAUTHORIZED_KEYS=\"/etc/persistent/authorized_keys\"
+
 CONFIGURE_ARGS += \
 	--disable-pam \
 	--enable-openpty \

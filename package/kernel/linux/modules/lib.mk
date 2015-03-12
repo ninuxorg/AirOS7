@@ -12,7 +12,7 @@ define KernelPackage/lib-crc-ccitt
   TITLE:=CRC-CCITT support
   KCONFIG:=CONFIG_CRC_CCITT
   FILES:=$(LINUX_DIR)/lib/crc-ccitt.ko
-  AUTOLOAD:=$(call AutoProbe,crc-ccitt)
+  AUTOLOAD:=$(call AutoLoad,02,crc-ccitt)
 endef
 
 define KernelPackage/lib-crc-ccitt/description
@@ -88,7 +88,7 @@ define KernelPackage/lib-crc32c
   KCONFIG:=CONFIG_LIBCRC32C
   DEPENDS:=+kmod-crypto-crc32c
   FILES:=$(LINUX_DIR)/lib/libcrc32c.ko
-  AUTOLOAD:=$(call AutoProbe,libcrc32c)
+  AUTOLOAD:=$(call AutoLoad,02,libcrc32c)
 endef
 
 define KernelPackage/lib-crc32c/description
@@ -107,7 +107,7 @@ define KernelPackage/lib-lzo
   FILES:= \
 	$(LINUX_DIR)/lib/lzo/lzo_compress.ko \
 	$(LINUX_DIR)/lib/lzo/lzo_decompress.ko
-  AUTOLOAD:=$(call AutoProbe,lzo_compress lzo_decompress)
+  AUTOLOAD:=$(call AutoLoad,03,lzo_compress lzo_decompress)
 endef
 
 define KernelPackage/lib-lzo/description
@@ -161,7 +161,7 @@ SUBMENU:=$(LIB_MENU)
     $(LINUX_DIR)/lib/ts_kmp.ko \
     $(LINUX_DIR)/lib/ts_bm.ko \
     $(LINUX_DIR)/lib/ts_fsm.ko
-  AUTOLOAD:=$(call AutoProbe,ts_kmp ts_bm ts_fsm)
+  AUTOLOAD:=$(call AutoLoad,02,ts_kmp ts_bm ts_fsm)
 endef
 
 $(eval $(call KernelPackage,lib-textsearch))

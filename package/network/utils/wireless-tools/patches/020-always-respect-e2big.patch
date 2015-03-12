@@ -1,0 +1,37 @@
+Index: wireless_tools.29/iwlist.c
+===================================================================
+--- wireless_tools.29.orig/iwlist.c	2013-04-05 18:20:51.811114231 +0300
++++ wireless_tools.29/iwlist.c	2013-04-05 18:22:43.807116902 +0300
+@@ -791,9 +791,8 @@
+ 	  wrq.u.data.length = buflen;
+ 	  if(iw_get_ext(skfd, ifname, SIOCGIWSCAN, &wrq) < 0)
+ 	    {
+-	      /* Check if buffer was too small (WE-17 only) */
+-	      if((errno == E2BIG) && (range.we_version_compiled > 16)
+-	         && (buflen < 0xFFFF))
++	      /* Check if buffer was too small */
++	      if(errno == E2BIG)
+ 		{
+ 		  /* Some driver may return very large scan results, either
+ 		   * because there are many cells, or because they have many
+@@ -806,8 +805,18 @@
+ 		  /* Check if the driver gave us any hints. */
+ 		  if(wrq.u.data.length > buflen)
+ 		    buflen = wrq.u.data.length;
+-		  else
+-		    buflen *= 2;
++		  else {
++			  if(buflen > 60000) {
++				  if(buffer)
++					  free(buffer);
++				  fprintf(stderr, "%s: buffer too large(%d) for realocating\n", __FUNCTION__, buflen);
++				  return(-1);
++			  }
++			  if(buflen > 30000)
++				  buflen = 0xffff;
++			  else
++				  buflen *= 2;
++		  }
+ 
+                  /* wrq.u.data.length is 16 bits so max size is 65535 */
+                  if(buflen > 0xFFFF)

@@ -53,8 +53,11 @@ else
 
   LINUX_SOURCE:=linux-$(LINUX_VERSION).tar.xz
   TESTING:=$(if $(findstring -rc,$(LINUX_VERSION)),/testing,)
+
+  LINUX_BASE:=$(if $(findstring 2.6, $(KERNEL_PATCHVER)),v2.6,v3.x)
+
   ifeq ($(call qstrip,$(CONFIG_EXTERNAL_KERNEL_TREE))$(call qstrip,$(CONFIG_KERNEL_GIT_CLONE_URI)),)
-      LINUX_SITE:=@KERNEL/linux/kernel/v3.x$(TESTING)
+      LINUX_SITE:=@KERNEL/linux/kernel/$(LINUX_BASE)/$(TESTING)
   endif
 
   ifneq ($(TARGET_BUILD),1)

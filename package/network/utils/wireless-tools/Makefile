@@ -80,6 +80,7 @@ define Package/wireless-tools/install
 	$(INSTALL_BIN) $(PKG_INSTALL_DIR)/usr/sbin/iwconfig $(1)/usr/sbin/
 	ln -sf iwconfig $(1)/usr/sbin/iwlist
 	ln -sf iwconfig $(1)/usr/sbin/iwpriv
+	ln -sf iwconfig $(1)/usr/sbin/iwevent
 endef
 
 define Package/libiw/install

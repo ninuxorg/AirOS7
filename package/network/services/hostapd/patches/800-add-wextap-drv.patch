@@ -1,0 +1,1559 @@
+--- /dev/null
++++ b/src/drivers/driver_wextap.c
+@@ -0,0 +1,1498 @@
++/*
++ * hostapd / Driver interaction with Atheros driver
++ * Copyright (c) 2004, Sam Leffler <sam@errno.com>
++ * Copyright (c) 2004, Video54 Technologies
++ * Copyright (c) 2005-2007, Jouni Malinen <j@w1.fi>
++ * Copyright (c) 2009, Atheros Communications
++ *
++ * This software may be distributed under the terms of the BSD license.
++ * See README for more details.
++ */
++
++#include "includes.h"
++#include <net/if.h>
++#include <sys/ioctl.h>
++
++#include "linux_wext.h"
++#include "common.h"
++#include "common/ieee802_11_defs.h"
++#include "driver.h"
++#include "eloop.h"
++#include "priv_netlink.h"
++#include "l2_packet/l2_packet.h"
++
++#include "ap/hostapd.h"
++#include "ap/sta_info.h"
++#include "ap/wpa_auth.h"
++#include "ap/accounting.h"
++#include "ap/tkip_countermeasures.h"
++#include "ap/ieee802_11.h"
++#include "radius/radius.h"
++
++#include "netlink.h"
++#include "priv_netlink.h"
++
++
++struct wextap_driver_data {
++	struct hostapd_data *hapd;		/* back pointer */
++
++	char	iface[IFNAMSIZ + 1];
++	int     ifindex;
++	struct l2_packet_data *sock_xmit;	/* raw packet xmit socket */
++	struct l2_packet_data *sock_recv;	/* raw packet recv socket */
++	int	ioctl_sock;			/* socket for ioctl() use */
++	struct netlink_data *netlink;
++	int	we_version;
++	u8	acct_mac[ETH_ALEN];
++	struct hostap_sta_driver_data acct_data;
++
++	struct l2_packet_data *sock_raw; /* raw 802.11 management frames */
++	struct wpabuf *wpa_ie;
++	struct wpabuf *wps_beacon_ie;
++	struct wpabuf *wps_probe_resp_ie;
++	u8	own_addr[ETH_ALEN];
++};
++
++
++static int
++wextap_set_auth_generic(struct wextap_driver_data *drv, int idx, u32 value)
++{
++	struct iwreq iwr;
++	int ret = 0;
++
++	memset(&iwr, 0, sizeof(iwr));
++	strncpy(iwr.ifr_name, drv->iface, IFNAMSIZ);
++	iwr.u.param.flags = idx & IW_AUTH_INDEX;
++	iwr.u.param.value = value;
++
++	if (ioctl(drv->ioctl_sock, SIOCSIWAUTH, &iwr) < 0) {
++		perror("ioctl[SIOCSIWAUTH]");
++		fprintf(stderr, "WEXT auth param %d value 0x%x - ",
++				idx, value);
++		ret = -1;
++	}
++
++	return ret;
++}
++
++static int
++wextap_set_iface_flags(void *priv, int dev_up)
++{
++	struct wextap_driver_data *drv = priv;
++	struct ifreq ifr;
++
++	wpa_printf(MSG_DEBUG, "%s: dev_up=%d", __func__, dev_up);
++
++	if (drv->ioctl_sock < 0)
++		return -1;
++
++	memset(&ifr, 0, sizeof(ifr));
++	os_strlcpy(ifr.ifr_name, drv->iface, IFNAMSIZ);
++
++	if (ioctl(drv->ioctl_sock, SIOCGIFFLAGS, &ifr) != 0) {
++		perror("ioctl[SIOCGIFFLAGS]");
++		return -1;
++	}
++
++#ifdef CONFIG_UPDOWN_CONTROL
++	if (dev_up)
++		ifr.ifr_flags |= IFF_UP;
++	else
++		ifr.ifr_flags &= ~IFF_UP;
++#endif
++
++	if (ioctl(drv->ioctl_sock, SIOCSIFFLAGS, &ifr) != 0) {
++		perror("ioctl[SIOCSIFFLAGS]");
++		return -1;
++	}
++
++#ifdef CONFIG_HOSTAPD_SETMTU
++	if (dev_up) {
++		memset(&ifr, 0, sizeof(ifr));
++		os_strlcpy(ifr.ifr_name, drv->iface, IFNAMSIZ);
++		ifr.ifr_mtu = HOSTAPD_MTU;
++		if (ioctl(drv->ioctl_sock, SIOCSIFMTU, &ifr) != 0) {
++			perror("ioctl[SIOCSIFMTU]");
++			printf("Setting MTU failed - trying to survive with "
++					"current value\n");
++		}
++	}
++#endif
++
++	return 0;
++}
++
++static int wextap_mlme_generic(struct wextap_driver_data *drv, const u8 *addr, int cmd, int reason_code)
++{
++	struct iwreq iwr;
++	struct iw_mlme mlme;
++	int ret = 0;
++
++	os_memset(&iwr, 0, sizeof(iwr));
++	strncpy(iwr.ifr_name, drv->iface, IFNAMSIZ);
++	memset(&mlme, 0, sizeof(mlme));
++	mlme.cmd = cmd;
++	mlme.reason_code = reason_code;
++//    mlme.addr.sa_family = ARPHRD_ETHER;
++	memcpy(mlme.addr.sa_data, addr, ETH_ALEN);
++	iwr.u.data.pointer = (caddr_t) &mlme;
++	iwr.u.data.length = sizeof(mlme);
++
++	if (ioctl(drv->ioctl_sock, SIOCSIWMLME, &iwr) < 0) {
++		perror("ioctl[SIOCSIWMLME]");
++		ret = -1;
++	}
++	return ret;
++}
++
++#ifndef CONFIG_NO_STDOUT_DEBUG
++static const char *
++ether_sprintf(const u8 *addr)
++{
++	static char buf[sizeof(MACSTR)];
++
++	if (addr != NULL)
++		snprintf(buf, sizeof(buf), MACSTR, MAC2STR(addr));
++	else
++		snprintf(buf, sizeof(buf), MACSTR, 0,0,0,0,0,0);
++	return buf;
++}
++#endif /* CONFIG_NO_STDOUT_DEBUG */
++
++/*
++ * Configure WPA parameters.
++ */
++static int
++wextap_configure_wpa(struct wextap_driver_data *drv, struct wpa_bss_params *params)
++{
++	struct hostapd_data *hapd = drv->hapd;
++	int v;
++
++	switch (params->wpa_group) {
++	case WPA_CIPHER_CCMP:
++		v = IW_AUTH_CIPHER_CCMP;
++		break;
++	case WPA_CIPHER_TKIP:
++		v = IW_AUTH_CIPHER_TKIP;
++		break;
++	case WPA_CIPHER_WEP104:
++		v = IW_AUTH_CIPHER_WEP104;
++		break;
++	case WPA_CIPHER_WEP40:
++		v = IW_AUTH_CIPHER_WEP40;
++		break;
++	case WPA_CIPHER_NONE:
++		v = IW_AUTH_CIPHER_NONE;
++		break;
++	default:
++		wpa_printf(MSG_ERROR, "Unknown group key cipher %u\n",
++				params->wpa_group);
++		return -1;
++	}
++	wpa_printf(MSG_DEBUG, "%s: group key cipher=%d\n", __func__, v);
++	if (wextap_set_auth_generic(drv, IW_AUTH_CIPHER_GROUP, v)) {
++		printf("Unable to set group key cipher to %u\n", v);
++		return -1;
++	}
++
++	v = 0;
++	if (params->wpa_pairwise & WPA_CIPHER_CCMP)
++		v |= IW_AUTH_CIPHER_CCMP;
++	if (params->wpa_pairwise & WPA_CIPHER_TKIP)
++		v |= IW_AUTH_CIPHER_TKIP;
++	if (params->wpa_pairwise & WPA_CIPHER_NONE)
++		v |= IW_AUTH_CIPHER_NONE;
++	wpa_printf(MSG_DEBUG, "%s: pairwise key ciphers=0x%x\n", __func__, v);
++	if (wextap_set_auth_generic(drv, IW_AUTH_CIPHER_PAIRWISE, v)) {
++		printf("Unable to set pairwise key ciphers to 0x%x\n", v);
++		return -1;
++	}
++
++	wpa_printf(MSG_DEBUG, "%s: key management algorithms=0x%x\n",
++			__func__, params->wpa_key_mgmt);
++	if (wextap_set_auth_generic(drv, IW_AUTH_KEY_MGMT, params->wpa_key_mgmt)) {
++		printf("Unable to set key management algorithms to 0x%x\n",
++				params->wpa_key_mgmt);
++		return -1;
++	}
++
++#ifdef SOME_TIME_LATER
++	v = 0;
++	if (conf->rsn_preauth)
++		v |= BIT(0);
++	wpa_printf(MSG_DEBUG, "%s: rsn capabilities=0x%x\n", __func__, params->rsn_preauth);
++	if (set80211param(drv, IEEE80211_PARAM_RSNCAPS, v)) {
++		printf("Unable to set RSN capabilities to 0x%x\n", v);
++		return -1;
++	}
++#endif  //  SOME_TIME_LATER
++
++	return 0;
++}
++
++static int
++wextap_set_ieee8021x(void *priv, struct wpa_bss_params *params)
++{
++	struct wextap_driver_data *drv = priv;
++	int res = 0;
++
++	wpa_printf(MSG_DEBUG, "%s: enabled=%d", __func__, params->enabled);
++
++	if (!params->enabled) {
++		/* XXX restore state */
++		return wextap_set_auth_generic(drv, IW_AUTH_80211_AUTH_ALG,
++				(IW_AUTH_ALG_SHARED_KEY | IW_AUTH_ALG_OPEN_SYSTEM) );
++	}
++	if (!params->wpa && !params->ieee802_1x) {
++		hostapd_logger(drv->hapd, NULL, HOSTAPD_MODULE_DRIVER,
++				HOSTAPD_LEVEL_WARNING, "No 802.1X or WPA enabled!");
++		return -1;
++	}
++	if (params->wpa && wextap_configure_wpa(drv, params) != 0) {
++		hostapd_logger(drv->hapd, NULL, HOSTAPD_MODULE_DRIVER,
++				HOSTAPD_LEVEL_WARNING, "Error configuring WPA state!");
++		return -1;
++	}
++	if (params->wpa) {
++		int v = 0;
++		res = wextap_set_auth_generic(drv, IW_AUTH_80211_AUTH_ALG,
++				(IW_AUTH_ALG_SHARED_KEY | IW_AUTH_ALG_OPEN_SYSTEM));
++		if (res == 0)
++			res = wextap_set_auth_generic(drv, IW_AUTH_WPA_ENABLED, 1);
++
++		/* have to set WPA version after wpa enabling */
++		wpa_printf(MSG_DEBUG, "%s: enable WPA=0x%x\n", __func__, params->wpa);
++		switch (params->wpa) {
++		case 0:
++			v = IW_AUTH_WPA_VERSION_DISABLED;
++			break;
++		case 1:
++			v = IW_AUTH_WPA_VERSION_WPA;
++			break;
++		case 2:
++			v = IW_AUTH_WPA_VERSION_WPA2;
++			break;
++		case 3:
++			v = IW_AUTH_WPA_VERSION_WPA | IW_AUTH_WPA_VERSION_WPA2;
++			break;
++		}
++		res = wextap_set_auth_generic(drv, IW_AUTH_WPA_VERSION, v);
++	} else
++		res = wextap_set_auth_generic(drv, IW_AUTH_80211_AUTH_ALG, IW_AUTH_ALG_LEAP);
++	if (res)
++		hostapd_logger(drv->hapd, NULL, HOSTAPD_MODULE_DRIVER,
++				HOSTAPD_LEVEL_WARNING, "Error enabling WPA/802.1X!");
++	return res;
++}
++
++static int
++wextap_set_privacy(void *priv, int enabled)
++{
++	struct wextap_driver_data *drv = priv;
++	struct hostapd_data *hapd = drv->hapd;
++
++	wpa_printf(MSG_DEBUG, "%s: enabled=%d\n", __func__, enabled);
++
++	return wextap_set_auth_generic(drv, IW_AUTH_PRIVACY_INVOKED, enabled);
++}
++
++/**
++ * Some kind of UBNT hack to support (un)autorize station
++ * via standart siwmlme ioctl
++ **/
++#define IW_MLME_AUTHORIZE   63
++#define IW_MLME_UNAUTHORIZE 64
++static int
++wextap_sta_set_flags(void *priv, const u8 *addr,
++		      int total_flags, int flags_or, int flags_and)
++{
++	struct wextap_driver_data *drv = priv;
++	struct hostapd_data *hapd = drv->hapd;
++
++	/* For now, only support setting Authorized flag */
++	if (flags_or & WPA_STA_AUTHORIZED) {
++		wpa_printf(MSG_DEBUG,
++				"%s: addr=%s autorized\n",  __func__, ether_sprintf(addr));
++		return wextap_mlme_generic(drv, addr, IW_MLME_AUTHORIZE, 0);
++	}
++	if (!(flags_and & WPA_STA_AUTHORIZED)) {
++		wpa_printf(MSG_DEBUG,
++				"%s: addr=%s unautorized\n",    __func__, ether_sprintf(addr));
++		return wextap_mlme_generic(drv, addr, IW_MLME_UNAUTHORIZE, 0);
++	}
++	return 0;
++}
++#undef  IW_MLME_AUTHORIZE
++#undef  IW_MLME_UNAUTHORIZE
++
++#define IW_MLME_CLEAR_STATS 65
++static int
++wextap_sta_clear_stats(void *priv, const u8 *addr)
++{
++	struct wextap_driver_data *drv = priv;
++
++	wpa_printf(MSG_DEBUG, "%s: addr=%s", __func__, ether_sprintf(addr));
++
++	return wextap_mlme_generic(drv, addr, IW_MLME_CLEAR_STATS, 0);
++}
++#undef  IW_MLME_CLEAR_STATS
++
++#define IW_MLME_GET_STATS   66
++static int
++wextap_read_sta_driver_data(void *priv, struct hostap_sta_driver_data *data, const u8 *addr)
++{
++	struct wextap_driver_data *drv = priv;
++	struct iwreq iwr;
++	struct iw_mlme mlme;
++	u32 *stats = (u32*)&mlme;
++	int ret = 0;
++
++	/**
++	 * There's no such wext ioctl
++	 * but I don't want hostapd include drivers headers
++	 * so logic is straight forward:
++	 * a kind of mlme ioctl which returns statistics overwriting mlme structure
++	 **/
++	os_memset(&iwr, 0, sizeof(iwr));
++	strncpy(iwr.ifr_name, drv->iface, IFNAMSIZ);
++	memset(&mlme, 0, sizeof(mlme));
++	mlme.cmd = IW_MLME_GET_STATS;
++	memcpy(mlme.addr.sa_data, addr, ETH_ALEN);
++	iwr.u.data.pointer = (caddr_t) &mlme;
++	iwr.u.data.length = sizeof(mlme);
++
++	if (ioctl(drv->ioctl_sock, SIOCSIWMLME, &iwr) < 0) {
++		if (memcmp(addr, drv->acct_mac, ETH_ALEN) == 0) {
++			memcpy(data, &drv->acct_data, sizeof(*data));
++			return 0;
++		}
++		printf("Failed to get station stats information element.\n");
++		return -1;
++	}
++
++	data->rx_packets    = stats[0];
++	data->rx_bytes      = stats[1];
++	data->tx_packets    = stats[2];
++	data->tx_bytes      = stats[3];
++
++	return 0;
++}
++#undef  IW_MLME_GET_STATS
++
++static int
++wextap_set_key(const char *ifname, void *priv, enum wpa_alg alg,
++		const u8 *addr, int key_idx, int set_tx, const u8 *seq,
++		size_t seq_len, const u8 *key, size_t key_len)
++{
++	struct wextap_driver_data *drv = priv;
++	struct hostapd_data *hapd = drv->hapd;
++	struct iwreq iwr;
++	struct iw_encode_ext *ext;
++
++	wpa_printf(MSG_DEBUG, "%s: alg=%d addr=%s key_idx=%d",
++			__func__, alg, ether_sprintf(addr), key_idx);
++
++	ext = malloc(sizeof(*ext) + key_len);
++	if (ext == NULL)
++		return -1;
++	memset(&iwr, 0, sizeof(iwr));
++	memset(ext,  0, sizeof(*ext));
++	strncpy(iwr.ifr_name, drv->iface, IFNAMSIZ);
++	iwr.u.encoding.flags = key_idx + 1;
++	iwr.u.encoding.pointer = (caddr_t) ext;
++	iwr.u.encoding.length = sizeof(*ext) + key_len;
++
++	if (!addr || !memcmp(addr, "\xff\xff\xff\xff\xff\xff", ETH_ALEN) )
++		ext->ext_flags |= IW_ENCODE_EXT_GROUP_KEY;
++	if (set_tx)
++		ext->ext_flags |= IW_ENCODE_EXT_SET_TX_KEY;
++//    ext->addr.sa_family = ARPHRD_ETHER;
++
++	if (addr)
++		memcpy(ext->addr.sa_data, addr, ETH_ALEN);
++	else
++		memset(ext->addr.sa_data, 0xff, ETH_ALEN);
++	if (key && key_len) {
++		memcpy(ext + 1, key, key_len);
++		ext->key_len = key_len;
++	}
++
++    switch (alg) {
++	case WPA_ALG_NONE:
++		ext->alg = IW_ENCODE_ALG_NONE;
++		iwr.u.encoding.flags |= IW_ENCODE_DISABLED;
++		break;
++	case WPA_ALG_WEP:
++		ext->alg = IW_ENCODE_ALG_WEP;
++		break;
++	case WPA_ALG_TKIP:
++		ext->alg = IW_ENCODE_ALG_TKIP;
++		break;
++	case WPA_ALG_CCMP:
++		ext->alg = IW_ENCODE_ALG_CCMP;
++		break;
++#ifdef CONFIG_IEEE80211W
++	case WPA_ALG_IGTK:
++		ext->alg = IW_ENCODE_ALG_AES_CMAC;
++		break;
++#endif /* CONFIG_IEEE80211W */
++	default:
++		printf("%s: unknown/unsupported algorithm %s\n",
++				__func__, alg);
++		free(ext);
++		return -1;
++	}
++
++	if (ioctl(drv->ioctl_sock, SIOCSIWENCODEEXT, &iwr) < 0) {
++		free(ext);
++		perror("ioctl[SIOCSIWENCODEEXT]");
++		return -1;
++	}
++
++	free(ext);
++	return 0;
++}
++
++static int
++wextap_get_seqnum(const char *ifname, void *priv, const u8 *addr, int idx, u8 *seq)
++{
++	struct wextap_driver_data *drv = priv;
++	struct hostapd_data *hapd = drv->hapd;
++	struct iwreq iwr;
++	struct iw_encode_ext *ext;
++
++	wpa_printf(MSG_DEBUG, "%s: addr=%s key_idx=%d\n", __func__, ether_sprintf(addr), idx);
++
++	ext = malloc(sizeof(*ext) + IW_ENCODING_TOKEN_MAX);
++	if (ext == NULL)
++		return -1;
++	memset(&iwr, 0, sizeof(iwr));
++	strncpy(iwr.ifr_name, drv->iface, IFNAMSIZ);
++	iwr.u.encoding.flags = idx + 1;
++	iwr.u.encoding.pointer = (caddr_t) ext;
++	iwr.u.encoding.length = sizeof(*ext) + IW_ENCODING_TOKEN_MAX;
++
++	if (addr)
++		memcpy(ext->addr.sa_data, addr, ETH_ALEN);
++	else
++		memset(ext->addr.sa_data, 0xff, ETH_ALEN);
++	if (!addr || !memcmp(addr, "\xff\xff\xff\xff\xff\xff", ETH_ALEN) )
++		ext->ext_flags |= IW_ENCODE_EXT_GROUP_KEY;
++
++	if (ioctl(drv->ioctl_sock, SIOCGIWENCODEEXT, &iwr) < 0) {
++		perror("ioctl[SIOCGIWENCODEEXT]");
++		free(ext);
++		return -1;
++	}
++
++	memcpy(seq, ext->tx_seq, WPA_KEY_RSC_LEN);
++	free(ext);
++	return 0;
++}
++
++static int
++wextap_sta_deauth(void *priv, const u8 *own_addr, const u8 *addr, int reason_code)
++{
++	struct wextap_driver_data *drv = priv;
++	struct hostapd_data *hapd = drv->hapd;
++
++	wpa_printf(MSG_DEBUG, "%s: addr=%s reason_code=%d\n",
++			__func__, ether_sprintf(addr), reason_code);
++
++	return wextap_mlme_generic(drv, addr, IW_MLME_DEAUTH, reason_code);
++}
++
++static int
++wextap_flush(void *priv)
++{
++	u8 allsta[ETH_ALEN];
++	memset(allsta, 0xff, ETH_ALEN);
++	return wextap_sta_deauth(priv, NULL, allsta, 1);
++}
++
++static int
++wextap_set_opt_ie(void *priv, const u8 *ie, size_t ie_len)
++{
++	/*
++	 * Do nothing; we setup parameters at startup that define the
++	 * contents of the beacon information element.
++	 */
++	return 0;
++}
++
++static int
++wextap_sta_disassoc(void *priv, const u8 *own_addr, const u8 *addr, int reason_code)
++{
++	struct wextap_driver_data *drv = priv;
++	struct hostapd_data *hapd = drv->hapd;
++
++	wpa_printf(MSG_DEBUG, "%s: addr=%s reason_code=%d\n",
++			__func__, ether_sprintf(addr), reason_code);
++
++	return wextap_mlme_generic(drv, addr, IW_MLME_DISASSOC, reason_code);
++}
++
++#ifdef CONFIG_IEEE80211R
++static void wextap_raw_recv_11r(void *ctx, const u8 *src_addr, const u8 *buf,
++				 size_t len)
++{
++	struct wextap_driver_data *drv = ctx;
++	union wpa_event_data event;
++	const struct ieee80211_mgmt *mgmt;
++	u16 fc;
++	u16 stype;
++	int ielen;
++	const u8 *iebuf;
++
++	/* Do 11R processing for ASSOC/AUTH/FT ACTION frames */
++	if (len < IEEE80211_HDRLEN)
++		return;
++	mgmt = (const struct ieee80211_mgmt *) buf;
++
++	fc = le_to_host16(mgmt->frame_control);
++
++	if (WLAN_FC_GET_TYPE(fc) != WLAN_FC_TYPE_MGMT)
++		return;
++	stype = WLAN_FC_GET_STYPE(fc);
++
++	wpa_printf(MSG_DEBUG, "%s: subtype 0x%x len %d", __func__, stype,
++		   (int) len);
++
++	if (os_memcmp(drv->own_addr, mgmt->bssid, ETH_ALEN) != 0) {
++		wpa_printf(MSG_DEBUG, "%s: BSSID does not match - ignore",
++			   __func__);
++		return;
++	}
++	switch (stype) {
++	case WLAN_FC_STYPE_ASSOC_REQ:
++		if (len - IEEE80211_HDRLEN < sizeof(mgmt->u.assoc_req))
++			break;
++		ielen = len - (IEEE80211_HDRLEN + sizeof(mgmt->u.assoc_req));
++		iebuf = mgmt->u.assoc_req.variable;
++		drv_event_assoc(drv->hapd, mgmt->sa, iebuf, ielen, 0);
++		break;
++	case WLAN_FC_STYPE_REASSOC_REQ:
++		if (len - IEEE80211_HDRLEN < sizeof(mgmt->u.reassoc_req))
++			break;
++		ielen = len - (IEEE80211_HDRLEN + sizeof(mgmt->u.reassoc_req));
++		iebuf = mgmt->u.reassoc_req.variable;
++		drv_event_assoc(drv->hapd, mgmt->sa, iebuf, ielen, 1);
++		break;
++	case WLAN_FC_STYPE_ACTION:
++		os_memset(&event, 0, sizeof(event));
++		event.rx_mgmt.frame = buf;
++		event.rx_mgmt.frame_len = len;
++		wpa_supplicant_event(drv->hapd, EVENT_RX_MGMT, &event);
++		break;
++	case WLAN_FC_STYPE_AUTH:
++		if (len - IEEE80211_HDRLEN < sizeof(mgmt->u.auth))
++			break;
++		os_memset(&event, 0, sizeof(event));
++		os_memcpy(event.auth.peer, mgmt->sa, ETH_ALEN);
++		os_memcpy(event.auth.bssid, mgmt->bssid, ETH_ALEN);
++		event.auth.auth_type = le_to_host16(mgmt->u.auth.auth_alg);
++		event.auth.status_code =
++			le_to_host16(mgmt->u.auth.status_code);
++		event.auth.auth_transaction =
++			le_to_host16(mgmt->u.auth.auth_transaction);
++		event.auth.ies = mgmt->u.auth.variable;
++		event.auth.ies_len = len - IEEE80211_HDRLEN -
++			sizeof(mgmt->u.auth);
++		wpa_supplicant_event(drv->hapd, EVENT_AUTH, &event);
++		break;
++	default:
++		break;
++	}
++}
++#endif /* CONFIG_IEEE80211R */
++
++#ifdef CONFIG_HS20
++static void wextap_raw_recv_hs20(void *ctx, const u8 *src_addr, const u8 *buf,
++				 size_t len)
++{
++	struct wextap_driver_data *drv = ctx;
++	const struct ieee80211_mgmt *mgmt;
++	u16 fc;
++	union wpa_event_data event;
++
++	/* Send the Action frame for HS20 processing */
++
++	if (len < IEEE80211_HDRLEN + sizeof(mgmt->u.action.category) +
++	    sizeof(mgmt->u.action.u.public_action))
++		return;
++
++	mgmt = (const struct ieee80211_mgmt *) buf;
++
++	fc = le_to_host16(mgmt->frame_control);
++	if (WLAN_FC_GET_TYPE(fc) != WLAN_FC_TYPE_MGMT ||
++	    WLAN_FC_GET_STYPE(fc) != WLAN_FC_STYPE_ACTION ||
++	    mgmt->u.action.category != WLAN_ACTION_PUBLIC)
++		return;
++
++	wpa_printf(MSG_DEBUG, "%s:Received Public Action frame", __func__);
++
++	os_memset(&event, 0, sizeof(event));
++	event.rx_mgmt.frame = (const u8 *) mgmt;
++	event.rx_mgmt.frame_len = len;
++	wpa_supplicant_event(drv->hapd, EVENT_RX_MGMT, &event);
++}
++#endif /* CONFIG_HS20 */
++
++#if defined(CONFIG_WNM) && !defined(CONFIG_IEEE80211R)
++static void wextap_raw_recv_11v(void *ctx, const u8 *src_addr, const u8 *buf,
++				 size_t len)
++{
++	struct wextap_driver_data *drv = ctx;
++	union wpa_event_data event;
++	const struct ieee80211_mgmt *mgmt;
++	u16 fc;
++	u16 stype;
++
++	/* Do 11R processing for WNM ACTION frames */
++	if (len < IEEE80211_HDRLEN)
++		return;
++	mgmt = (const struct ieee80211_mgmt *) buf;
++
++	fc = le_to_host16(mgmt->frame_control);
++
++	if (WLAN_FC_GET_TYPE(fc) != WLAN_FC_TYPE_MGMT)
++		return;
++	stype = WLAN_FC_GET_STYPE(fc);
++
++	wpa_printf(MSG_DEBUG, "%s: subtype 0x%x len %d", __func__, stype,
++		   (int) len);
++
++	if (os_memcmp(drv->own_addr, mgmt->bssid, ETH_ALEN) != 0) {
++		wpa_printf(MSG_DEBUG, "%s: BSSID does not match - ignore",
++			   __func__);
++		return;
++	}
++
++	switch (stype) {
++	case WLAN_FC_STYPE_ACTION:
++		if (&mgmt->u.action.category > buf + len)
++			break;
++		os_memset(&event, 0, sizeof(event));
++		event.rx_action.da = mgmt->da;
++		event.rx_action.sa = mgmt->sa;
++		event.rx_action.bssid = mgmt->bssid;
++		event.rx_action.category = mgmt->u.action.category;
++		event.rx_action.data = &mgmt->u.action.category;
++		event.rx_action.len = buf + len - event.rx_action.data;
++		wpa_supplicant_event(drv->hapd, EVENT_RX_ACTION, &event);
++		break;
++	default:
++		break;
++	}
++}
++#endif /* CONFIG_WNM */
++
++#if defined(CONFIG_IEEE80211R) || defined(CONFIG_WNM)
++static void wextap_raw_receive(void *ctx, const u8 *src_addr, const u8 *buf,
++				size_t len)
++{
++#ifdef CONFIG_IEEE80211R
++	wextap_raw_recv_11r(ctx, src_addr, buf, len);
++#endif /* CONFIG_IEEE80211R */
++#if defined(CONFIG_WNM) && !defined(CONFIG_IEEE80211R)
++	wextap_raw_recv_11v(ctx, src_addr, buf, len);
++#endif /* CONFIG_WNM */
++#ifdef CONFIG_HS20
++	wextap_raw_recv_hs20(ctx, src_addr, buf, len);
++#endif /* CONFIG_HS20 */
++}
++#endif /* CONFIG_IEEE80211R */
++
++static int wextap_receive_pkt(struct wextap_driver_data *drv)
++{
++	/* Don't set filters for receiving management frames
++	 * as currently we don't use */
++	return 0;
++
++#ifdef SOME_TIME_LATER
++
++	int ret = 0;
++	struct ieee80211req_set_filter filt;
++
++	wpa_printf(MSG_DEBUG, "%s Enter", __func__);
++	filt.app_filterype = 0;
++#ifdef CONFIG_IEEE80211R
++	filt.app_filterype |= (IEEE80211_FILTER_TYPE_ASSOC_REQ |
++			       IEEE80211_FILTER_TYPE_AUTH |
++			       IEEE80211_FILTER_TYPE_ACTION);
++#endif
++#ifdef CONFIG_WNM
++	filt.app_filterype |= IEEE80211_FILTER_TYPE_ACTION;
++#endif /* CONFIG_WNM */
++#ifdef CONFIG_HS20
++	filt.app_filterype |= IEEE80211_FILTER_TYPE_ACTION;
++#endif /* CONFIG_HS20 */
++	if (filt.app_filterype) {
++		ret = set80211priv(drv, IEEE80211_IOCTL_FILTERFRAME, &filt,
++				   sizeof(struct ieee80211req_set_filter));
++		if (ret)
++			return ret;
++	}
++
++#if defined(CONFIG_IEEE80211R)
++	drv->sock_raw = l2_packet_init(drv->iface, NULL, ETH_P_80211_RAW,
++				       wextap_raw_receive, drv, 1);
++	if (drv->sock_raw == NULL)
++		return -1;
++#endif /* CONFIG_IEEE80211R */
++	return ret;
++
++#endif  // SOME_TIME_LATER
++}
++
++static int wextap_reset_appfilter(struct wextap_driver_data *drv)
++{
++	/* Don't reset filters for receiving management frames
++	 * as currently we don't use in wextap_receive_pkt */
++	return 0;
++
++#ifdef SOME_TIME_LATER
++	struct ieee80211req_set_filter filt;
++	filt.app_filterype = 0;
++	return set80211priv(drv, IEEE80211_IOCTL_FILTERFRAME, &filt,
++			    sizeof(struct ieee80211req_set_filter));
++#endif  // SOME_TIME_LATER
++}
++
++#ifdef CONFIG_IEEE80211R
++static int
++wextap_sta_auth(void *priv, const u8 *own_addr, const u8 *addr, u16 seq,
++		 u16 status_code, const u8 *ie, size_t len)
++{
++    wpa_printf(MSG_ERROR, "%s: Unsupported\n", __func__);
++	return -1;
++}
++
++static int
++wextap_sta_assoc(void *priv, const u8 *own_addr, const u8 *addr,
++		  int reassoc, u16 status_code, const u8 *ie, size_t len)
++{
++    wpa_printf(MSG_ERROR, "%s: Unsupported\n", __func__);
++	return -1;
++}
++#endif /* CONFIG_IEEE80211R */
++
++
++static int
++wextap_process_wpa_ie(struct wextap_driver_data *drv, struct sta_info *sta)
++{
++	struct hostapd_data *hapd = drv->hapd;
++	struct iwreq iwr;
++	int ielen, res;
++	u8 iebuf[IW_GENERIC_IE_MAX];
++
++	wpa_printf(MSG_DEBUG,
++			"%s: addr=%s\n", __func__, ether_sprintf(sta->addr));
++
++	memset(&iwr, 0, sizeof(iwr));
++	memset(&iebuf, 0, sizeof(iebuf));
++	strncpy(iwr.ifr_name, drv->iface, IFNAMSIZ);
++	iwr.u.encoding.pointer = (caddr_t)iebuf;
++	iwr.u.encoding.length = IW_GENERIC_IE_MAX;
++
++	/**
++	 * Some king of hack here:
++	 * I set WPA flag, so driver will check iebuf for sta mac address
++	 * and will return this station WPA IE
++	 * Will work with UBNT atheros driver
++	 **/
++	iwr.u.encoding.flags = IW_AUTH_WPA_ENABLED;
++	memcpy(iebuf, sta->addr, ETH_ALEN);
++
++	if (ioctl(drv->ioctl_sock, SIOCGIWGENIE, &iwr) < 0) {
++		perror("ioctl[SIOCGIWGENIE]");
++		return -1;
++	}
++
++	ielen = iebuf[1];
++	if (ielen == 0) {
++		printf("No WPA/RSN information element for station!?\n");
++		return -1;      /* XXX not right */
++	}
++	ielen += 2;
++	if (sta->wpa_sm == NULL)
++		sta->wpa_sm = wpa_auth_sta_init(hapd->wpa_auth, sta->addr, NULL);
++	if (sta->wpa_sm == NULL) {
++		printf("Failed to initialize WPA state machine\n");
++		return -1;
++	}
++	res = wpa_validate_wpa_ie(hapd->wpa_auth, sta->wpa_sm,
++			iebuf, ielen, NULL, 0);
++	if (res != WPA_IE_OK) {
++		printf("WPA/RSN information element rejected? (res %u)\n", res);
++		return -1;
++	}
++
++	return 0;
++}
++
++
++static int
++wextap_new_sta(struct wextap_driver_data *drv, u8 *addr)
++{
++	struct hostapd_data *hapd = drv->hapd;
++	struct sta_info *sta;
++	int new_assoc;
++
++	hostapd_logger(hapd, addr, HOSTAPD_MODULE_IEEE80211,
++			HOSTAPD_LEVEL_INFO, "associated");
++
++	sta = ap_get_sta(hapd, addr);
++	if (sta) {
++		accounting_sta_stop(hapd, sta);
++	} else {
++		sta = ap_sta_add(hapd, addr);
++		if (sta == NULL)
++			return -1;
++	}
++
++	if (memcmp(addr, drv->acct_mac, ETH_ALEN) == 0) {
++		/* Cached accounting data is not valid anymore. */
++		memset(drv->acct_mac, 0, ETH_ALEN);
++		memset(&drv->acct_data, 0, sizeof(drv->acct_data));
++	}
++
++	if (hapd->conf->wpa) {
++		if (wextap_process_wpa_ie(drv, sta))
++			return -1;
++	}
++
++	/*
++	 * Now that the internal station state is setup
++	 * kick the authenticator into action.
++	 */
++	new_assoc = (sta->flags & WLAN_STA_ASSOC) == 0;
++	sta->flags |= WLAN_STA_AUTH | WLAN_STA_ASSOC;
++	wpa_auth_sm_event(sta->wpa_sm, WPA_ASSOC);
++	hostapd_new_assoc_sta(hapd, sta, !new_assoc);
++	ieee802_1x_notify_port_enabled(sta->eapol_sm, 1);
++
++	return 0;
++}
++
++static void
++wextap_wireless_event_wireless_custom(struct wextap_driver_data *drv,
++				       char *custom, char *end)
++{
++	wpa_printf(MSG_DEBUG, "Custom wireless event: '%s'", custom);
++
++	if (strncmp(custom, "MLME-MICHAELMICFAILURE.indication", 33) == 0) {
++		char *pos;
++		u8 addr[ETH_ALEN];
++		pos = strstr(custom, "addr=");
++		if (pos == NULL) {
++			wpa_printf(MSG_DEBUG,
++				   "MLME-MICHAELMICFAILURE.indication "
++				   "without sender address ignored");
++			return;
++		}
++		pos += 5;
++		if (hwaddr_aton(pos, addr) == 0) {
++			union wpa_event_data data;
++			os_memset(&data, 0, sizeof(data));
++			data.michael_mic_failure.unicast = 1;
++			data.michael_mic_failure.src = addr;
++			wpa_supplicant_event(drv->hapd,
++					     EVENT_MICHAEL_MIC_FAILURE, &data);
++		} else {
++			wpa_printf(MSG_DEBUG,
++				   "MLME-MICHAELMICFAILURE.indication "
++				   "with invalid MAC address");
++		}
++	} else if (strncmp(custom, "STA-TRAFFIC-STAT", 16) == 0) {
++		char *key, *value;
++		u32 val;
++		key = custom;
++		while ((key = strchr(key, '\n')) != NULL) {
++			key++;
++			value = strchr(key, '=');
++			if (value == NULL)
++				continue;
++			*value++ = '\0';
++			val = strtoul(value, NULL, 10);
++			if (strcmp(key, "mac") == 0)
++				hwaddr_aton(value, drv->acct_mac);
++			else if (strcmp(key, "rx_packets") == 0)
++				drv->acct_data.rx_packets = val;
++			else if (strcmp(key, "tx_packets") == 0)
++				drv->acct_data.tx_packets = val;
++			else if (strcmp(key, "rx_bytes") == 0)
++				drv->acct_data.rx_bytes = val;
++			else if (strcmp(key, "tx_bytes") == 0)
++				drv->acct_data.tx_bytes = val;
++			key = value;
++		}
++#if defined(CONFIG_IEEE80211R) || defined(CONFIG_HS20)
++#define MGMT_FRAM_TAG_SIZE 30 /* hardcoded in driver */
++	} else if (strncmp(custom, "Manage.prob_req ", 16) == 0) {
++		/*
++		 * Atheros driver uses a hack to pass Probe Request frames as a
++		 * binary data in the custom wireless event. The old way (using
++		 * packet sniffing) didn't work when bridging.
++		 * Format: "Manage.prob_req <frame len>" | zero padding | frame
++		 */
++		int len = atoi(custom + 16);
++		if (len < 0 || custom + MGMT_FRAM_TAG_SIZE + len > end) {
++			wpa_printf(MSG_DEBUG, "Invalid Manage.prob_req event "
++				   "length %d", len);
++			return;
++		}
++		wextap_raw_receive(drv, NULL,
++				    (u8 *) custom + MGMT_FRAM_TAG_SIZE, len);
++	} else if (strncmp(custom, "Manage.assoc_req ", 17) == 0) {
++		/* Format: "Manage.assoc_req <frame len>" | zero padding |
++		 * frame */
++		int len = atoi(custom + 17);
++		if (len < 0 || custom + MGMT_FRAM_TAG_SIZE + len > end) {
++			wpa_printf(MSG_DEBUG, "Invalid Manage.prob_req/"
++				   "assoc_req/auth event length %d", len);
++			return;
++		}
++		wextap_raw_receive(drv, NULL,
++				    (u8 *) custom + MGMT_FRAM_TAG_SIZE, len);
++	} else if (strncmp(custom, "Manage.action ", 14) == 0) {
++		/* Format: "Manage.assoc_req <frame len>" | zero padding |
++		 * frame */
++		int len = atoi(custom + 14);
++		if (len < 0 || custom + MGMT_FRAM_TAG_SIZE + len > end) {
++			wpa_printf(MSG_DEBUG, "Invalid Manage.prob_req/"
++				   "assoc_req/auth event length %d", len);
++			return;
++		}
++		wextap_raw_receive(drv, NULL,
++				    (u8 *) custom + MGMT_FRAM_TAG_SIZE, len);
++	} else if (strncmp(custom, "Manage.auth ", 12) == 0) {
++		/* Format: "Manage.auth <frame len>" | zero padding | frame
++		 */
++		int len = atoi(custom + 12);
++		if (len < 0 || custom + MGMT_FRAM_TAG_SIZE + len > end) {
++			wpa_printf(MSG_DEBUG, "Invalid Manage.prob_req/"
++				   "assoc_req/auth event length %d", len);
++			return;
++		}
++		wextap_raw_receive(drv, NULL,
++				    (u8 *) custom + MGMT_FRAM_TAG_SIZE, len);
++#endif /* CONFIG_IEEE80211R */
++	}
++}
++
++/*
++* Handle size of data problem. WEXT only allows data of 256 bytes for custom
++* events, and p2p data can be much bigger. So the athr driver sends a small
++* event telling me to collect the big data with an ioctl.
++* On the first event, send all pending events to supplicant.
++*/
++static void fetch_pending_big_events(struct wextap_driver_data *drv)
++{
++    wpa_printf(MSG_ERROR, "%s: Unsupported\n", __func__);
++	return;
++}
++
++static void
++wextap_wireless_event_wextap_custom(struct wextap_driver_data *drv,
++				      int opcode, char *buf, int len)
++{
++	switch (opcode) {
++	case 3: //IEEE80211_EV_RX_MGMT:
++		wpa_printf(MSG_DEBUG, "WEXT: EV_RX_MGMT");
++		fetch_pending_big_events(drv);
++		break;
++	default:
++		break;
++	}
++}
++
++static void
++wextap_wireless_event_wireless(struct wextap_driver_data *drv,
++				char *data, int len)
++{
++	struct iw_event iwe_buf, *iwe = &iwe_buf;
++	char *pos, *end, *custom, *buf;
++
++	pos = data;
++	end = data + len;
++
++	while (pos + IW_EV_LCP_LEN <= end) {
++		/* Event data may be unaligned, so make a local, aligned copy
++		 * before processing. */
++		memcpy(&iwe_buf, pos, IW_EV_LCP_LEN);
++		wpa_printf(MSG_MSGDUMP, "Wireless event: cmd=0x%x len=%d",
++			   iwe->cmd, iwe->len);
++		if (iwe->len <= IW_EV_LCP_LEN)
++			return;
++
++		custom = pos + IW_EV_POINT_LEN;
++		if (drv->we_version > 18 &&
++		    (iwe->cmd == IWEVMICHAELMICFAILURE ||
++		     iwe->cmd == IWEVASSOCREQIE ||
++		     iwe->cmd == IWEVCUSTOM)) {
++			/* WE-19 removed the pointer from struct iw_point */
++			char *dpos = (char *) &iwe_buf.u.data.length;
++			int dlen = dpos - (char *) &iwe_buf;
++			memcpy(dpos, pos + IW_EV_LCP_LEN,
++			       sizeof(struct iw_event) - dlen);
++		} else {
++			memcpy(&iwe_buf, pos, sizeof(struct iw_event));
++			custom += IW_EV_POINT_OFF;
++		}
++
++		switch (iwe->cmd) {
++		case IWEVEXPIRED:
++			drv_event_disassoc(drv->hapd,
++					   (u8 *) iwe->u.addr.sa_data);
++			break;
++		case IWEVREGISTERED:
++			wextap_new_sta(drv, (u8 *) iwe->u.addr.sa_data);
++			break;
++		case IWEVASSOCREQIE:
++			/* Driver hack.. Use IWEVASSOCREQIE to bypass
++			 * IWEVCUSTOM size limitations. Need to handle this
++			 * just like IWEVCUSTOM.
++			 */
++		case IWEVCUSTOM:
++			if (custom + iwe->u.data.length > end)
++				return;
++			buf = malloc(iwe->u.data.length + 1);
++			if (buf == NULL)
++				return;		/* XXX */
++			memcpy(buf, custom, iwe->u.data.length);
++			buf[iwe->u.data.length] = '\0';
++
++			if (iwe->u.data.flags != 0) {
++				wextap_wireless_event_wextap_custom(
++					drv, (int) iwe->u.data.flags,
++					buf, len);
++			} else {
++				wextap_wireless_event_wireless_custom(
++					drv, buf, buf + iwe->u.data.length);
++			}
++			free(buf);
++			break;
++		}
++
++		pos += iwe->len;
++	}
++}
++
++static void
++wextap_wireless_event_rtm_newlink(void *ctx, struct ifinfomsg *ifi, u8 *buf, size_t len)
++{
++	struct wextap_driver_data *drv = ctx;
++	int attrlen, rta_len;
++	struct rtattr *attr;
++
++	if (ifi->ifi_index != drv->ifindex)
++		return;
++
++	attrlen = len;
++	attr = (struct rtattr *) buf;
++
++	rta_len = RTA_ALIGN(sizeof(struct rtattr));
++	while (RTA_OK(attr, attrlen)) {
++		if (attr->rta_type == IFLA_WIRELESS) {
++			wextap_wireless_event_wireless(
++				drv, ((char *) attr) + rta_len,
++				attr->rta_len - rta_len);
++		}
++		attr = RTA_NEXT(attr, attrlen);
++	}
++}
++
++static int
++wextap_get_we_version(struct wextap_driver_data *drv)
++{
++	struct iw_range *range;
++	struct iwreq iwr;
++	int minlen;
++	size_t buflen;
++
++	drv->we_version = 0;
++
++	/*
++	 * Use larger buffer than struct iw_range in order to allow the
++	 * structure to grow in the future.
++	 */
++	buflen = sizeof(struct iw_range) + 500;
++	range = os_zalloc(buflen);
++	if (range == NULL)
++		return -1;
++
++	memset(&iwr, 0, sizeof(iwr));
++	os_strlcpy(iwr.ifr_name, drv->iface, IFNAMSIZ);
++	iwr.u.data.pointer = (caddr_t) range;
++	iwr.u.data.length = buflen;
++
++	minlen = ((char *) &range->enc_capa) - (char *) range + sizeof(range->enc_capa);
++
++	if (ioctl(drv->ioctl_sock, SIOCGIWRANGE, &iwr) < 0) {
++		perror("ioctl[SIOCGIWRANGE]");
++		free(range);
++		return -1;
++	} else if (iwr.u.data.length >= minlen && range->we_version_compiled >= 18) {
++		wpa_printf(MSG_DEBUG, "SIOCGIWRANGE: WE(compiled)=%d "
++			   "WE(source)=%d enc_capa=0x%x",
++			   range->we_version_compiled,
++			   range->we_version_source,
++			   range->enc_capa);
++		drv->we_version = range->we_version_compiled;
++	}
++
++	os_free(range);
++	return 0;
++}
++
++static int
++wextap_wireless_event_init(struct wextap_driver_data *drv)
++{
++	struct netlink_config *cfg;
++
++	wextap_get_we_version(drv);
++
++	cfg = os_zalloc(sizeof(*cfg));
++	if (cfg == NULL)
++		return -1;
++	cfg->ctx = drv;
++	cfg->newlink_cb = wextap_wireless_event_rtm_newlink;
++	drv->netlink = netlink_init(cfg);
++	if (drv->netlink == NULL) {
++		os_free(cfg);
++		return -1;
++	}
++
++	return 0;
++}
++
++static int
++wextap_send_eapol(void *priv, const u8 *addr, const u8 *data, size_t data_len,
++		   int encrypt, const u8 *own_addr, u32 flags)
++{
++	struct wextap_driver_data *drv = priv;
++	unsigned char buf[3000];
++	unsigned char *bp = buf;
++	struct l2_ethhdr *eth;
++	size_t len;
++	int status;
++
++	/*
++	 * Prepend the Ethernet header.  If the caller left us
++	 * space at the front we could just insert it but since
++	 * we don't know we copy to a local buffer.  Given the frequency
++	 * and size of frames this probably doesn't matter.
++	 */
++	len = data_len + sizeof(struct l2_ethhdr);
++	if (len > sizeof(buf)) {
++		bp = malloc(len);
++		if (bp == NULL) {
++			printf("EAPOL frame discarded, cannot malloc temp "
++			       "buffer of size %lu!\n", (unsigned long) len);
++			return -1;
++		}
++	}
++	eth = (struct l2_ethhdr *) bp;
++	memcpy(eth->h_dest, addr, ETH_ALEN);
++	memcpy(eth->h_source, own_addr, ETH_ALEN);
++	eth->h_proto = host_to_be16(ETH_P_EAPOL);
++	memcpy(eth+1, data, data_len);
++
++	wpa_hexdump(MSG_MSGDUMP, "TX EAPOL", bp, len);
++
++	status = l2_packet_send(drv->sock_xmit, addr, ETH_P_EAPOL, bp, len);
++
++	if (bp != buf)
++		free(bp);
++	return status;
++}
++
++static void
++handle_read(void *ctx, const u8 *src_addr, const u8 *buf, size_t len)
++{
++	struct wextap_driver_data *drv = ctx;
++	drv_event_eapol_rx(drv->hapd, src_addr, buf + sizeof(struct l2_ethhdr),
++			   len - sizeof(struct l2_ethhdr));
++}
++
++static void *
++wextap_init(struct hostapd_data *hapd, struct wpa_init_params *params)
++{
++	struct wextap_driver_data *drv;
++	struct ifreq ifr;
++	struct iwreq iwr;
++	char brname[IFNAMSIZ];
++
++	drv = os_zalloc(sizeof(struct wextap_driver_data));
++	if (drv == NULL) {
++		printf("Could not allocate memory for wextap driver data\n");
++		return NULL;
++	}
++
++	drv->hapd = hapd;
++	drv->ioctl_sock = socket(PF_INET, SOCK_DGRAM, 0);
++	if (drv->ioctl_sock < 0) {
++		perror("socket[PF_INET,SOCK_DGRAM]");
++		goto bad;
++	}
++	memcpy(drv->iface, params->ifname, sizeof(drv->iface));
++
++	memset(&ifr, 0, sizeof(ifr));
++	os_strlcpy(ifr.ifr_name, drv->iface, sizeof(ifr.ifr_name));
++	if (ioctl(drv->ioctl_sock, SIOCGIFINDEX, &ifr) != 0) {
++		perror("ioctl(SIOCGIFINDEX)");
++		goto bad;
++	}
++	drv->ifindex = ifr.ifr_ifindex;
++
++	drv->sock_xmit = l2_packet_init(drv->iface, NULL, ETH_P_EAPOL,
++					handle_read, drv, 1);
++	if (drv->sock_xmit == NULL)
++		goto bad;
++	if (l2_packet_get_own_addr(drv->sock_xmit, params->own_addr))
++		goto bad;
++	os_memcpy(drv->own_addr, params->own_addr, ETH_ALEN);
++	if (params->bridge[0]) {
++		wpa_printf(MSG_DEBUG, "Configure bridge %s for EAPOL traffic.",
++			   params->bridge[0]);
++		drv->sock_recv = l2_packet_init(params->bridge[0], NULL,
++						ETH_P_EAPOL, handle_read, drv,
++						1);
++		if (drv->sock_recv == NULL)
++			goto bad;
++	} else if (linux_br_get(brname, drv->iface) == 0) {
++		wpa_printf(MSG_DEBUG, "Interface in bridge %s; configure for "
++			   "EAPOL receive", brname);
++		drv->sock_recv = l2_packet_init(brname, NULL, ETH_P_EAPOL,
++						handle_read, drv, 1);
++		if (drv->sock_recv == NULL)
++			goto bad;
++	} else
++		drv->sock_recv = drv->sock_xmit;
++
++	memset(&iwr, 0, sizeof(iwr));
++	os_strlcpy(iwr.ifr_name, drv->iface, IFNAMSIZ);
++
++	iwr.u.mode = IW_MODE_MASTER;
++
++	if (ioctl(drv->ioctl_sock, SIOCSIWMODE, &iwr) < 0) {
++		perror("ioctl[SIOCSIWMODE]");
++		printf("Could not set interface to master mode!\n");
++		goto bad;
++	}
++
++	wextap_set_iface_flags(drv, 0);	/* mark down during setup */
++	wextap_set_privacy(drv, 0);		/* default to no privacy */
++
++	if (wextap_receive_pkt(drv))
++		goto bad;
++
++	if (wextap_wireless_event_init(drv))
++		goto bad;
++
++	return drv;
++bad:
++	wextap_reset_appfilter(drv);
++	if (drv->sock_raw)
++		l2_packet_deinit(drv->sock_raw);
++	if (drv->sock_recv != NULL && drv->sock_recv != drv->sock_xmit)
++		l2_packet_deinit(drv->sock_recv);
++	if (drv->sock_xmit != NULL)
++		l2_packet_deinit(drv->sock_xmit);
++	if (drv->ioctl_sock >= 0)
++		close(drv->ioctl_sock);
++	if (drv != NULL)
++		free(drv);
++	return NULL;
++}
++
++
++static void
++wextap_deinit(void *priv)
++{
++	struct wextap_driver_data *drv = priv;
++
++	/* disable WPA on exit */
++	wextap_set_auth_generic(drv, IW_AUTH_WPA_ENABLED, 0);
++
++	wextap_reset_appfilter(drv);
++	netlink_deinit(drv->netlink);
++	wextap_set_iface_flags(drv, 0);
++	if (drv->ioctl_sock >= 0)
++		close(drv->ioctl_sock);
++	if (drv->sock_recv != NULL && drv->sock_recv != drv->sock_xmit)
++		l2_packet_deinit(drv->sock_recv);
++	if (drv->sock_xmit != NULL)
++		l2_packet_deinit(drv->sock_xmit);
++	if (drv->sock_raw)
++		l2_packet_deinit(drv->sock_raw);
++	wpabuf_free(drv->wpa_ie);
++	wpabuf_free(drv->wps_beacon_ie);
++	wpabuf_free(drv->wps_probe_resp_ie);
++	free(drv);
++}
++
++static int
++wextap_set_ssid(void *priv, const u8 *buf, int len)
++{
++	struct wextap_driver_data *drv = priv;
++	struct iwreq iwr;
++
++	memset(&iwr, 0, sizeof(iwr));
++	os_strlcpy(iwr.ifr_name, drv->iface, IFNAMSIZ);
++	iwr.u.essid.flags = 1; /* SSID active */
++	iwr.u.essid.pointer = (caddr_t) buf;
++	iwr.u.essid.length = len + 1;
++
++	if (ioctl(drv->ioctl_sock, SIOCSIWESSID, &iwr) < 0) {
++		perror("ioctl[SIOCSIWESSID]");
++		printf("len=%d\n", len);
++		return -1;
++	}
++	return 0;
++}
++
++static int
++wextap_get_ssid(void *priv, u8 *buf, int len)
++{
++	struct wextap_driver_data *drv = priv;
++	struct iwreq iwr;
++	int ret = 0;
++
++	memset(&iwr, 0, sizeof(iwr));
++	os_strlcpy(iwr.ifr_name, drv->iface, IFNAMSIZ);
++	iwr.u.essid.pointer = (caddr_t) buf;
++	iwr.u.essid.length = (len > IW_ESSID_MAX_SIZE) ?
++		IW_ESSID_MAX_SIZE : len;
++
++	if (ioctl(drv->ioctl_sock, SIOCGIWESSID, &iwr) < 0) {
++		perror("ioctl[SIOCGIWESSID]");
++		ret = -1;
++	} else
++		ret = iwr.u.essid.length;
++
++	return ret;
++}
++
++static int
++wextap_set_countermeasures(void *priv, int enabled)
++{
++	struct wextap_driver_data *drv = priv;
++
++	wpa_printf(MSG_DEBUG, "%s: enabled=%d", __FUNCTION__, enabled);
++
++	return wextap_set_auth_generic(drv, IW_AUTH_TKIP_COUNTERMEASURES, enabled);
++}
++
++static int
++wextap_commit(void *priv)
++{
++	struct wextap_driver_data *drv = priv;
++	return wextap_set_iface_flags(drv, 1);
++}
++
++static int wextap_set_ap(void *priv, struct wpa_driver_ap_params *params)
++{
++	/*
++	 * TODO: Use this to replace set_authmode, set_privacy, set_ieee8021x,
++	 * set_generic_elem, and hapd_set_ssid.
++	 */
++
++	wpa_printf(MSG_DEBUG, "wextap: set_ap - pairwise_ciphers=0x%x "
++		   "group_cipher=0x%x key_mgmt_suites=0x%x auth_algs=0x%x "
++		   "wpa_version=0x%x privacy=%d interworking=%d",
++		   params->pairwise_ciphers, params->group_cipher,
++		   params->key_mgmt_suites, params->auth_algs,
++		   params->wpa_version, params->privacy, params->interworking);
++	wpa_hexdump_ascii(MSG_DEBUG, "wextap: SSID",
++			  params->ssid, params->ssid_len);
++	if (params->hessid)
++		wpa_printf(MSG_DEBUG, "wextap: HESSID " MACSTR,
++			   MAC2STR(params->hessid));
++	wpa_hexdump_buf(MSG_DEBUG, "wextap: beacon_ies",
++			params->beacon_ies);
++	wpa_hexdump_buf(MSG_DEBUG, "wextap: proberesp_ies",
++			params->proberesp_ies);
++	wpa_hexdump_buf(MSG_DEBUG, "wextap: assocresp_ies",
++			params->assocresp_ies);
++
++	return 0;
++}
++
++#ifdef CONFIG_IEEE80211R
++
++static int wextap_send_mgmt(void *priv, const u8 *frm, size_t data_len,
++			     int noack)
++{
++    wpa_printf(MSG_ERROR, "%s: Unsupported\n", __func__);
++	return -1;
++}
++
++static int wextap_add_tspec(void *priv, const u8 *addr, u8 *tspec_ie,
++			     size_t tspec_ielen)
++{
++    wpa_printf(MSG_ERROR, "%s: Unsupported\n", __func__);
++	return -1;
++}
++
++static int wextap_add_sta_node(void *priv, const u8 *addr, u16 auth_alg)
++{
++    wpa_printf(MSG_ERROR, "%s: Unsupported\n", __func__);
++	return -1;
++}
++
++#endif /* CONFIG_IEEE80211R */
++
++static int wextap_send_action(void *priv, unsigned int freq,
++			       unsigned int wait,
++			       const u8 *dst, const u8 *src,
++			       const u8 *bssid,
++			       const u8 *data, size_t data_len, int no_cck)
++{
++    wpa_printf(MSG_ERROR, "%s: Unsupported\n", __func__);
++	return -1;
++}
++
++#ifdef CONFIG_WNM
++static int wextap_wnm_oper(void *priv, enum wnm_oper oper, const u8 *peer,
++			    u8 *buf, u16 *buf_len)
++{
++    wpa_printf(MSG_ERROR, "%s: Unsupported\n", __func__);
++	return -1;
++}
++#endif /* CONFIG_WNM */
++
++const struct wpa_driver_ops wpa_driver_wextap_ops = {
++	.name					= "wextap",
++	.hapd_init				= wextap_init,
++	.hapd_deinit			= wextap_deinit,
++	.set_ieee8021x			= wextap_set_ieee8021x,
++	.set_privacy			= wextap_set_privacy,
++	.set_key				= wextap_set_key,
++	.get_seqnum				= wextap_get_seqnum,
++	.flush					= wextap_flush,
++	.set_generic_elem		= wextap_set_opt_ie,
++	.sta_set_flags			= wextap_sta_set_flags,
++	.read_sta_data			= wextap_read_sta_driver_data,
++	.hapd_send_eapol		= wextap_send_eapol,
++	.sta_disassoc			= wextap_sta_disassoc,
++	.sta_deauth				= wextap_sta_deauth,
++	.hapd_set_ssid			= wextap_set_ssid,
++	.hapd_get_ssid			= wextap_get_ssid,
++	.set_countermeasures	= wextap_set_countermeasures,
++	.sta_clear_stats		= wextap_sta_clear_stats,
++	.commit					= wextap_commit,
++	.set_ap					= wextap_set_ap,
++#ifdef CONFIG_IEEE80211R
++	.sta_assoc              = wextap_sta_assoc,
++	.sta_auth               = wextap_sta_auth,
++	.send_mlme				= wextap_send_mgmt,
++	.add_tspec				= wextap_add_tspec,
++	.add_sta_node			= wextap_add_sta_node,
++#endif /* CONFIG_IEEE80211R */
++	.send_action			= wextap_send_action,
++#ifdef CONFIG_WNM
++	.wnm_oper				= wextap_wnm_oper,
++#endif /* CONFIG_WNM */
++};
+--- a/src/drivers/drivers.c
++++ b/src/drivers/drivers.c
+@@ -16,6 +16,9 @@ void (*wpa_supplicant_event)(void *ctx,
+ #ifdef CONFIG_DRIVER_WEXT
+ extern struct wpa_driver_ops wpa_driver_wext_ops; /* driver_wext.c */
+ #endif /* CONFIG_DRIVER_WEXT */
++#ifdef CONFIG_DRIVER_WEXTAP
++extern struct wpa_driver_ops wpa_driver_wextap_ops; /* driver_wextap.c */
++#endif /* CONFIG_DRIVER_WEXTAP */
+ #ifdef CONFIG_DRIVER_NL80211
+ extern struct wpa_driver_ops wpa_driver_nl80211_ops; /* driver_nl80211.c */
+ #endif /* CONFIG_DRIVER_NL80211 */
+@@ -60,6 +63,9 @@ struct wpa_driver_ops *wpa_drivers[] =
+ #ifdef CONFIG_DRIVER_WEXT
+ 	&wpa_driver_wext_ops,
+ #endif /* CONFIG_DRIVER_WEXT */
++#ifdef CONFIG_DRIVER_WEXTAP
++	&wpa_driver_wextap_ops,
++#endif /* CONFIG_DRIVER_WEXTAP */
+ #ifdef CONFIG_DRIVER_HOSTAP
+ 	&wpa_driver_hostap_ops,
+ #endif /* CONFIG_DRIVER_HOSTAP */
+--- a/src/drivers/drivers.mak
++++ b/src/drivers/drivers.mak
+@@ -101,6 +101,15 @@ NEED_NETLINK=y
+ NEED_LINUX_IOCTL=y
+ endif
+ 
++ifdef CONFIG_DRIVER_WEXTAP
++DRV_AP_CFLAGS += -DCONFIG_DRIVER_WEXTAP
++DRV_AP_OBJS += ../src/drivers/driver_wextap.o
++CONFIG_WIRELESS_EXTENSION=y
++CONFIG_L2_PACKET=linux
++NEED_NETLINK=y
++NEED_LINUX_IOCTL=y
++endif
++
+ ##### PURE CLIENT DRIVERS
+ 
+ ifdef CONFIG_DRIVER_WEXT
+--- a/src/drivers/drivers.mk
++++ b/src/drivers/drivers.mk
+@@ -102,6 +102,15 @@ NEED_NETLINK=y
+ NEED_LINUX_IOCTL=y
+ endif
+ 
++ifdef CONFIG_DRIVER_WEXTAP
++DRV_AP_CFLAGS += -DCONFIG_DRIVER_WEXTAP
++DRV_AP_OBJS += src/drivers/driver_wextap.c
++CONFIG_WIRELESS_EXTENSION=y
++CONFIG_L2_PACKET=linux
++NEED_NETLINK=y
++NEED_LINUX_IOCTL=y
++endif
++
+ ##### PURE CLIENT DRIVERS
+ 
+ ifdef CONFIG_DRIVER_WEXT

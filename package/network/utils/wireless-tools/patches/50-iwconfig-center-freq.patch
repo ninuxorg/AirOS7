@@ -1,0 +1,47 @@
+Index: wireless_tools.29/iwconfig.c
+===================================================================
+--- wireless_tools.29.orig/iwconfig.c
++++ wireless_tools.29/iwconfig.c
+@@ -385,6 +385,13 @@ display_info(struct wireless_info *	info
+   if(tokens > 0)
+     printf("\n          ");
+ 
++  /* display center frequency */
++  if(info->b.center1_freq)
++    {
++      iw_print_freq_value(buffer, sizeof(buffer), info->b.center1_freq);
++      printf("Center1-Freq: %s\n", buffer);
++	}
++
+   /* Display encryption information */
+   /* Note : we display only the "current" key, use iwlist to list all keys */
+   if(info->b.has_key)
+Index: wireless_tools.29/iwlib.c
+===================================================================
+--- wireless_tools.29.orig/iwlib.c
++++ wireless_tools.29/iwlib.c
+@@ -702,6 +702,12 @@ iw_get_basic_config(int			skfd,
+       info->freq = iw_freq2float(&(wrq.u.freq));
+       info->freq_flags = wrq.u.freq.flags;
+     }
++  /* Get Center frequency (0xC1) */
++  wrq.u.freq.flags = 0xc1;
++  if(iw_get_ext(skfd, ifname, SIOCGIWFREQ, &wrq) >= 0)
++    {
++      info->center1_freq = iw_freq2float(&(wrq.u.freq));
++    }
+ 
+   /* Get encryption information */
+   wrq.u.data.pointer = (caddr_t) info->key;
+Index: wireless_tools.29/iwlib.h
+===================================================================
+--- wireless_tools.29.orig/iwlib.h
++++ wireless_tools.29/iwlib.h
+@@ -177,6 +177,7 @@ typedef struct wireless_config
+   int		has_freq;
+   double	freq;			/* Frequency/channel */
+   int		freq_flags;
++  double	center1_freq;			/* Center Frequency */
+   int		has_key;
+   unsigned char	key[IW_ENCODING_TOKEN_MAX];	/* Encoding key used */
+   int		key_size;		/* Number of bytes */

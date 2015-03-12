@@ -1,0 +1,38 @@
+Index: xtables-addons-1.45/extensions/rtsp/nf_nat_rtsp.c
+===================================================================
+--- xtables-addons-1.45.orig/extensions/rtsp/nf_nat_rtsp.c	2013-11-07 14:32:22.736458073 +0200
++++ xtables-addons-1.45/extensions/rtsp/nf_nat_rtsp.c	2013-11-07 14:36:18.880463553 +0200
+@@ -450,8 +450,11 @@
+     // We don't want to manip the per-protocol, just the IPs. 
+     mr.range[0].flags = NF_NAT_RANGE_MAP_IPS;
+     mr.range[0].min_ip = mr.range[0].max_ip = newip;
+-
++#if (LINUX_VERSION_CODE < KERNEL_VERSION(3,0,0))
++    nf_nat_setup_info(ct, &mr.range[0], IP_NAT_MANIP_DST);
++#else
+     nf_nat_setup_info(ct, &mr.range[0], NF_NAT_MANIP_DST);
++#endif
+ }
+ 
+ 
+Index: xtables-addons-1.45/extensions/LUA/xt_LUA_target.c
+===================================================================
+--- xtables-addons-1.45.orig/extensions/LUA/xt_LUA_target.c	2013-11-07 14:32:22.792458075 +0200
++++ xtables-addons-1.45/extensions/LUA/xt_LUA_target.c	2013-11-07 14:48:45.564480881 +0200
+@@ -19,12 +19,16 @@
+ #include <linux/kernel.h>
+ #include <linux/slab.h>
+ #include <linux/module.h>
++#include <linux/version.h>
+ #include <asm/uaccess.h>
+ #include <net/ip.h>
+ #include <linux/netfilter/x_tables.h>
+ #include "xt_LUA.h"
+ 
+ #include "controller.h"
++#if LINUX_VERSION_CODE <= KERNEL_VERSION(2, 6, 34)
++#include "../compat_xtnu.h"
++#endif
+ 
+ /*::*
+  * lua_envs

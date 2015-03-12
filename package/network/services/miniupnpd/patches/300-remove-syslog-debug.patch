@@ -1,0 +1,388 @@
+Index: miniupnpd-1.8.20130426/minissdp.c
+===================================================================
+--- miniupnpd-1.8.20130426.orig/minissdp.c
++++ miniupnpd-1.8.20130426/minissdp.c
+@@ -612,7 +612,7 @@ ProcessSSDPData(int s, const char *bufr,
+ 	lan_addr = get_lan_for_peer(sender);
+ 	if(lan_addr == NULL)
+ 	{
+-		syslog(LOG_WARNING, "SSDP packet sender %s not from a LAN, ignoring",
++		MY_LOG_DEBUG("SSDP packet sender %s not from a LAN, ignoring",
+ 		       sender_str);
+ 		return;
+ 	}
+@@ -643,7 +643,7 @@ ProcessSSDPData(int s, const char *bufr,
+ 				while(l > 0 && st[l-1] != ':')
+ 					l--;
+ 				st_ver = atoi(st+l);
+-				syslog(LOG_DEBUG, "ST: %.*s (ver=%d)", st_len, st, st_ver);
++				MY_LOG_DEBUG("ST: %.*s (ver=%d)", st_len, st, st_ver);
+ 				/*j = 0;*/
+ 				/*while(bufr[i+j]!='\r') j++;*/
+ 				/*syslog(LOG_INFO, "%.*s", j, bufr+i);*/
+@@ -661,7 +661,7 @@ ProcessSSDPData(int s, const char *bufr,
+ 				     && (mx + mx_len < bufr + n))
+ 					mx_len++;
+ 				mx_value = atoi(mx);
+-				syslog(LOG_DEBUG, "MX: %.*s (value=%d)", mx_len, mx, mx_value);
++				MY_LOG_DEBUG("MX: %.*s (value=%d)", mx_len, mx, mx_value);
+ 			}
+ #endif
+ 		}
+Index: miniupnpd-1.8.20130426/miniupnpd.c
+===================================================================
+--- miniupnpd-1.8.20130426.orig/miniupnpd.c
++++ miniupnpd-1.8.20130426/miniupnpd.c
+@@ -1120,7 +1120,7 @@ init(int argc, char * * argv, struct run
+ 
+ 	if(!debug_flag)
+ 	{
+-		/* speed things up and ignore LOG_INFO and LOG_DEBUG */
++		/* speed things up and ignore LOG_INFO and MY_LOG_DEBUG */
+ 		setlogmask(LOG_UPTO(LOG_NOTICE));
+ 	}
+ 
+@@ -1464,7 +1464,7 @@ main(int argc, char * * argv)
+ 		/* send public address change notifications if needed */
+ 		if(should_send_public_address_change_notif)
+ 		{
+-			syslog(LOG_DEBUG, "should send external iface address change notification(s)");
++			MY_LOG_DEBUG("should send external iface address change notification(s)");
+ #ifdef ENABLE_NATPMP
+ 			if(GETFLAG(ENABLENATPMPMASK))
+ 				SendNATPMPPublicAddressChangeNotification(snatpmp, addr_count);
+@@ -1534,7 +1534,7 @@ main(int argc, char * * argv)
+ 		if(nextruletoclean_timestamp
+ 		  && ((unsigned int)timeofday.tv_sec >= nextruletoclean_timestamp))
+ 		{
+-			syslog(LOG_DEBUG, "cleaning expired Port Mappings");
++			MY_LOG_DEBUG("cleaning expired Port Mappings");
+ 			get_upnp_rules_state_list(0);
+ 		}
+ 		if(nextruletoclean_timestamp
+@@ -1542,7 +1542,7 @@ main(int argc, char * * argv)
+ 		{
+ 			timeout.tv_sec = nextruletoclean_timestamp - timeofday.tv_sec;
+ 			timeout.tv_usec = 0;
+-			syslog(LOG_DEBUG, "setting timeout to %u sec",
++			MY_LOG_DEBUG("setting timeout to %u sec",
+ 			       (unsigned)timeout.tv_sec);
+ 		}
+ #ifdef ENABLE_NATPMP
+@@ -1551,7 +1551,7 @@ main(int argc, char * * argv)
+ 		while(nextnatpmptoclean_timestamp
+ 		     && (timeofday.tv_sec >= nextnatpmptoclean_timestamp + startup_time))
+ 		{
+-			/*syslog(LOG_DEBUG, "cleaning expired NAT-PMP mappings");*/
++			/*MY_LOG_DEBUG("cleaning expired NAT-PMP mappings");*/
+ 			if(CleanExpiredNATPMP() < 0) {
+ 				syslog(LOG_ERR, "CleanExpiredNATPMP() failed");
+ 				break;
+@@ -1560,7 +1560,7 @@ main(int argc, char * * argv)
+ 		if(nextnatpmptoclean_timestamp
+ 		  && timeout.tv_sec >= (nextnatpmptoclean_timestamp + startup_time - timeofday.tv_sec))
+ 		{
+-			/*syslog(LOG_DEBUG, "setting timeout to %d sec",
++			/*MY_LOG_DEBUG("setting timeout to %d sec",
+ 			       nextnatpmptoclean_timestamp + startup_time - timeofday.tv_sec);*/
+ 			timeout.tv_sec = nextnatpmptoclean_timestamp + startup_time - timeofday.tv_sec;
+ 			timeout.tv_usec = 0;
+@@ -1634,7 +1634,7 @@ main(int argc, char * * argv)
+ #ifdef DEBUG
+ 		if(i > 1)
+ 		{
+-			syslog(LOG_DEBUG, "%d active incoming HTTP connections", i);
++			MY_LOG_DEBUG("%d active incoming HTTP connections", i);
+ 		}
+ #endif
+ #ifdef ENABLE_NATPMP
+@@ -1718,10 +1718,10 @@ main(int argc, char * * argv)
+ 			struct sockaddr_un clientname;
+ 			struct ctlelem * tmp;
+ 			socklen_t clientnamelen = sizeof(struct sockaddr_un);
+-			/*syslog(LOG_DEBUG, "sctl!");*/
++			/*MY_LOG_DEBUG("sctl!");*/
+ 			s = accept(sctl, (struct sockaddr *)&clientname,
+ 			           &clientnamelen);
+-			syslog(LOG_DEBUG, "sctl! : '%s'", clientname.sun_path);
++			MY_LOG_DEBUG("sctl! : '%s'", clientname.sun_path);
+ 			tmp = malloc(sizeof(struct ctlelem));
+ 			if (tmp == NULL)
+ 			{
+@@ -1757,7 +1757,7 @@ main(int argc, char * * argv)
+ #ifdef ENABLE_IPV6
+ 		if(sudpv6 >= 0 && FD_ISSET(sudpv6, &readset))
+ 		{
+-			syslog(LOG_INFO, "Received UDP Packet (IPv6)");
++			MY_LOG_DEBUG("Received UDP Packet (IPv6)");
+ 			ProcessSSDPRequest(sudpv6, (unsigned short)v.port);
+ 		}
+ #endif
+Index: miniupnpd-1.8.20130426/natpmp.c
+===================================================================
+--- miniupnpd-1.8.20130426.orig/natpmp.c
++++ miniupnpd-1.8.20130426/natpmp.c
+@@ -213,7 +213,7 @@ void ProcessIncomingNATPMPPacket(int s)
+ 							  &iport2, &proto2,
+ 							  desc, sizeof(desc),
+ 					          0, 0, &timestamp, 0, 0) >= 0) {
+-						syslog(LOG_DEBUG, "%d %d %hu->'%s':%hu '%s'",
++						MY_LOG_DEBUG("%d %d %hu->'%s':%hu '%s'",
+ 						       index, proto2, eport2, iaddr2, iport2, desc);
+ 						if(0 == strcmp(iaddr2, senderaddrstr)
+ 						  && 0 == memcmp(desc, "NAT-PMP", 7)) {
+@@ -235,7 +235,7 @@ void ProcessIncomingNATPMPPacket(int s)
+ 					 * UPnP, we should check that we remove only NAT-PMP
+ 					 * mappings */
+ 					r = _upnp_delete_redir(eport, proto);
+-					/*syslog(LOG_DEBUG, "%hu %d r=%d", eport, proto, r);*/
++					/*MY_LOG_DEBUG("%hu %d r=%d", eport, proto, r);*/
+ 					if(r<0) {
+ 						syslog(LOG_ERR, "Failed to remove NAT-PMP mapping eport %hu, protocol %s",
+ 						       eport, (proto==IPPROTO_TCP)?"TCP":"UDP");
+@@ -339,7 +339,7 @@ int ScanNATPMPforExpiration()
+ 				nextnatpmptoclean_eport = eport;
+ 				nextnatpmptoclean_proto = proto;
+ 				nextnatpmptoclean_timestamp = timestamp;
+-				syslog(LOG_DEBUG, "set nextnatpmptoclean_timestamp to %u", timestamp);
++				MY_LOG_DEBUG("set nextnatpmptoclean_timestamp to %u", timestamp);
+ 			}
+ 		}
+ 	}
+Index: miniupnpd-1.8.20130426/testgetroute.c
+===================================================================
+--- miniupnpd-1.8.20130426.orig/testgetroute.c
++++ miniupnpd-1.8.20130426/testgetroute.c
+@@ -75,15 +75,15 @@ main(int argc, char ** argv)
+ 	}
+ 
+ 	if (dst) {
+-		syslog(LOG_DEBUG, "calling get_src_for_route_to(%p, %p, %p(%u), %p)",
++		MY_LOG_DEBUG("calling get_src_for_route_to(%p, %p, %p(%u), %p)",
+ 		       dst, src, &src_len, (unsigned)src_len, &index);
+ 		r = get_src_for_route_to (dst, src, &src_len, &index);
+-		syslog(LOG_DEBUG, "get_src_for_route_to() returned %d", r);
++		MY_LOG_DEBUG("get_src_for_route_to() returned %d", r);
+ 		if(r >= 0) {
+ 			char src_str[128];
+ 			sockaddr_to_string(dst, src_str, sizeof(src_str));
+-			syslog(LOG_DEBUG, "src=%s", src_str);
+-			syslog(LOG_DEBUG, "index=%d", index);
++			MY_LOG_DEBUG("src=%s", src_str);
++			MY_LOG_DEBUG("index=%d", index);
+ 		}
+ 	}
+ 	closelog();
+Index: miniupnpd-1.8.20130426/upnpevents.c
+===================================================================
+--- miniupnpd-1.8.20130426.orig/upnpevents.c
++++ miniupnpd-1.8.20130426/upnpevents.c
+@@ -128,7 +128,7 @@ upnpevents_addSubscriber(const char * ev
+ 	struct subscriber * tmp;
+ 	/*static char uuid[42];*/
+ 	/* "uuid:00000000-0000-0000-0000-000000000000"; 5+36+1=42bytes */
+-	syslog(LOG_DEBUG, "addSubscriber(%s, %.*s, %d)",
++	MY_LOG_DEBUG("addSubscriber(%s, %.*s, %d)",
+ 	       eventurl, callbacklen, callback, timeout);
+ 	/*strncpy(uuid, uuidvalue, sizeof(uuid));
+ 	uuid[sizeof(uuid)-1] = '\0';*/
+@@ -294,7 +294,7 @@ upnp_event_notify_connect(struct upnp_ev
+ 	inet_aton(obj->addrstr, &addr.sin_addr);
+ 	addr.sin_port = htons(port);
+ #endif
+-	syslog(LOG_DEBUG, "%s: '%s' %hu '%s'", "upnp_event_notify_connect",
++	MY_LOG_DEBUG("%s: '%s' %hu '%s'", "upnp_event_notify_connect",
+ 	       obj->addrstr, port, obj->path);
+ 	obj->state = EConnecting;
+ 	if(connect(obj->s, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+@@ -377,9 +377,9 @@ static void upnp_event_send(struct upnp_
+ {
+ 	int i;
+ 
+-	syslog(LOG_DEBUG, "%s: sending event notify message to %s:%s",
++	MY_LOG_DEBUG("%s: sending event notify message to %s:%s",
+ 	       "upnp_event_send", obj->addrstr, obj->portstr);
+-	syslog(LOG_DEBUG, "%s: msg: %s",
++	MY_LOG_DEBUG("%s: msg: %s",
+ 	       "upnp_event_send", obj->buffer + obj->sent);
+ 	i = send(obj->s, obj->buffer + obj->sent, obj->tosend - obj->sent, 0);
+ 	if(i<0) {
+@@ -413,7 +413,7 @@ static void upnp_event_recv(struct upnp_
+ 		}
+ 		return;
+ 	}
+-	syslog(LOG_DEBUG, "%s: (%dbytes) %.*s", "upnp_event_recv",
++	MY_LOG_DEBUG("%s: (%dbytes) %.*s", "upnp_event_recv",
+ 	       n, n, obj->buffer);
+ 	/* TODO : do something with the data recevied ?
+ 	 * right now, n (number of bytes received) is ignored
+@@ -466,7 +466,7 @@ void upnpevents_selectfds(fd_set *readse
+ {
+ 	struct upnp_event_notify * obj;
+ 	for(obj = notifylist.lh_first; obj != NULL; obj = obj->entries.le_next) {
+-		syslog(LOG_DEBUG, "upnpevents_selectfds: %p %d %d",
++		MY_LOG_DEBUG("upnpevents_selectfds: %p %d %d",
+ 		       obj, obj->state, obj->s);
+ 		if(obj->s >= 0) {
+ 			switch(obj->state) {
+@@ -500,7 +500,7 @@ void upnpevents_processfds(fd_set *reads
+ 	struct subscriber * subnext;
+ 	time_t curtime;
+ 	for(obj = notifylist.lh_first; obj != NULL; obj = obj->entries.le_next) {
+-		syslog(LOG_DEBUG, "%s: %p %d %d %d %d",
++		MY_LOG_DEBUG("%s: %p %d %d %d %d",
+ 		       "upnpevents_processfds", obj, obj->state, obj->s,
+ 		       FD_ISSET(obj->s, readset), FD_ISSET(obj->s, writeset));
+ 		if(obj->s >= 0) {
+Index: miniupnpd-1.8.20130426/upnphttp.c
+===================================================================
+--- miniupnpd-1.8.20130426.orig/upnphttp.c
++++ miniupnpd-1.8.20130426/upnphttp.c
+@@ -136,7 +136,7 @@ ParseHttpHeaders(struct upnphttp * h)
+ 					p++;
+ 				while(p[n]>=' ')
+ 					n++;
+-				syslog(LOG_DEBUG, "accept-language HTTP header : '%.*s'", n, p);
++				MY_LOG_DEBUG("accept-language HTTP header : '%.*s'", n, p);
+ 				/* keep only the 1st accepted language */
+ 				n = 0;
+ 				while(p[n]>' ' && p[n] != ',')
+@@ -156,7 +156,7 @@ ParseHttpHeaders(struct upnphttp * h)
+ 					n++;
+ 				if(strncasecmp(p, "100-continue", 12) == 0) {
+ 					h->respflags |= FLAG_CONTINUE;
+-					syslog(LOG_DEBUG, "\"Expect: 100-Continue\" header detected");
++					MY_LOG_DEBUG("\"Expect: 100-Continue\" header detected");
+ 				}
+ 			}
+ #ifdef ENABLE_EVENTS
+@@ -441,11 +441,11 @@ static void
+ ProcessHTTPSubscribe_upnphttp(struct upnphttp * h, const char * path)
+ {
+ 	const char * sid;
+-	syslog(LOG_DEBUG, "ProcessHTTPSubscribe %s", path);
+-	syslog(LOG_DEBUG, "Callback '%.*s' Timeout=%d",
++	MY_LOG_DEBUG("ProcessHTTPSubscribe %s", path);
++	MY_LOG_DEBUG("Callback '%.*s' Timeout=%d",
+ 	       h->req_CallbackLen, h->req_buf + h->req_CallbackOff,
+ 	       h->req_Timeout);
+-	syslog(LOG_DEBUG, "SID '%.*s'", h->req_SIDLen, h->req_buf + h->req_SIDOff);
++	MY_LOG_DEBUG("SID '%.*s'", h->req_SIDLen, h->req_buf + h->req_SIDOff);
+ 	if((h->req_CallbackOff <= 0) && (h->req_SIDOff <= 0)) {
+ 		/* Missing or invalid CALLBACK : 412 Precondition Failed.
+ 		 * If CALLBACK header is missing or does not contain a valid HTTP URL,
+@@ -478,7 +478,7 @@ ProcessHTTPSubscribe_upnphttp(struct upn
+ 				                               h->req_CallbackLen, h->req_Timeout);
+ 				h->respflags = FLAG_TIMEOUT;
+ 				if(sid) {
+-					syslog(LOG_DEBUG, "generated sid=%s", sid);
++					MY_LOG_DEBUG("generated sid=%s", sid);
+ 					h->respflags |= FLAG_SID;
+ 					h->res_SID = sid;
+ 				}
+@@ -516,8 +516,8 @@ with HTTP error 412 Precondition Failed.
+ static void
+ ProcessHTTPUnSubscribe_upnphttp(struct upnphttp * h, const char * path)
+ {
+-	syslog(LOG_DEBUG, "ProcessHTTPUnSubscribe %s", path);
+-	syslog(LOG_DEBUG, "SID '%.*s'", h->req_SIDLen, h->req_buf + h->req_SIDOff);
++	MY_LOG_DEBUG("ProcessHTTPUnSubscribe %s", path);
++	MY_LOG_DEBUG("SID '%.*s'", h->req_SIDLen, h->req_buf + h->req_SIDOff);
+ 	/* Remove from the list */
+ #ifdef UPNP_STRICT
+ 	if(h->req_SIDOff <= 0 || h->req_SIDLen == 0) {
+Index: miniupnpd-1.8.20130426/upnppermissions.c
+===================================================================
+--- miniupnpd-1.8.20130426.orig/upnppermissions.c
++++ miniupnpd-1.8.20130426/upnppermissions.c
+@@ -234,14 +234,14 @@ check_upnp_rule_against_permissions(cons
+ 	{
+ 		if(match_permission(permary + i, eport, address, iport))
+ 		{
+-			syslog(LOG_DEBUG,
++			MY_LOG_DEBUG(
+ 			       "UPnP permission rule %d matched : port mapping %s",
+ 			       i, (permary[i].type == UPNPPERM_ALLOW)?"accepted":"rejected"
+ 			       );
+ 			return (permary[i].type == UPNPPERM_ALLOW);
+ 		}
+ 	}
+-	syslog(LOG_DEBUG, "no permission rule matched : accept by default (n_perms=%d)", n_perms);
++	MY_LOG_DEBUG("no permission rule matched : accept by default (n_perms=%d)", n_perms);
+ 	return 1;	/* Default : accept */
+ }
+ 
+Index: miniupnpd-1.8.20130426/upnpredirect.c
+===================================================================
+--- miniupnpd-1.8.20130426.orig/upnpredirect.c
++++ miniupnpd-1.8.20130426/upnpredirect.c
+@@ -174,7 +174,7 @@ int reload_from_lease_file()
+ 
+ 	current_time = time(NULL);
+ 	while(fgets(line, sizeof(line), fd)) {
+-		syslog(LOG_DEBUG, "parsing lease file line '%s'", line);
++		MY_LOG_DEBUG("parsing lease file line '%s'", line);
+ 		proto = line;
+ 		p = strchr(line, ':');
+ 		if(!p) {
+Index: miniupnpd-1.8.20130426/upnpsoap.c
+===================================================================
+--- miniupnpd-1.8.20130426.orig/upnpsoap.c
++++ miniupnpd-1.8.20130426/upnpsoap.c
+@@ -1876,7 +1876,7 @@ ExecuteSoapAction(struct upnphttp * h, c
+ 			methodlen = p2 - p;
+ 		else
+ 			methodlen = n - (p - action);
+-		/*syslog(LOG_DEBUG, "SoapMethod: %.*s", methodlen, p);*/
++		/*MY_LOG_DEBUG("SoapMethod: %.*s", methodlen, p);*/
+ 		while(soapMethods[i].methodName)
+ 		{
+ 			len = strlen(soapMethods[i].methodName);
+Index: miniupnpd-1.8.20130426/upnputils.c
+===================================================================
+--- miniupnpd-1.8.20130426.orig/upnputils.c
++++ miniupnpd-1.8.20130426/upnputils.c
+@@ -121,13 +121,13 @@ get_lan_for_peer(const struct sockaddr *
+ 				if(get_src_for_route_to(peer, NULL, NULL, &index) < 0)
+ 					return NULL;
+ 			}
+-			syslog(LOG_DEBUG, "%s looking for LAN interface index=%d",
++			MY_LOG_DEBUG("%s looking for LAN interface index=%d",
+ 			       "get_lan_for_peer()", index);
+ 			for(lan_addr = lan_addrs.lh_first;
+ 			    lan_addr != NULL;
+ 			    lan_addr = lan_addr->list.le_next)
+ 			{
+-				syslog(LOG_DEBUG,
++				MY_LOG_DEBUG(
+ 				       "ifname=%s index=%u str=%s addr=%08x mask=%08x",
+ 				       lan_addr->ifname, lan_addr->index,
+ 				       lan_addr->str,
+@@ -154,10 +154,10 @@ get_lan_for_peer(const struct sockaddr *
+ #endif
+ 
+ 	if(lan_addr)
+-		syslog(LOG_DEBUG, "%s: found in LAN %s %s",
++		MY_LOG_DEBUG("%s: found in LAN %s %s",
+ 		       "get_lan_for_peer()", lan_addr->ifname, lan_addr->str);
+ 	else
+-		syslog(LOG_DEBUG, "%s: not found !", "get_lan_for_peer()");
++		MY_LOG_DEBUG("%s: not found !", "get_lan_for_peer()");
+ 	return lan_addr;
+ }
+ 
+Index: miniupnpd-1.8.20130426/genconfig.sh
+===================================================================
+--- miniupnpd-1.8.20130426.orig/genconfig.sh
++++ miniupnpd-1.8.20130426/genconfig.sh
+@@ -424,6 +424,10 @@ echo "/* disable reading and parsing of
+ echo "/*#define DISABLE_CONFIG_FILE*/" >> ${CONFIGFILE}
+ echo "" >> ${CONFIGFILE}
+ 
++
++echo "#define MY_LOG_DEBUG(...)" >> ${CONFIGFILE}
++
++
+ echo "#endif" >> ${CONFIGFILE}
+ 
+ ${MV} ${CONFIGFILE} ${CONFIGFILE_FINAL}

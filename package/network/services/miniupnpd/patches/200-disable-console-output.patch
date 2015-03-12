@@ -1,0 +1,19 @@
+--- a/miniupnpd.c
++++ b/miniupnpd.c
+@@ -713,15 +713,15 @@ init(int argc, char * * argv, struct run
+ 		}
+ 		pid = getpid();
+ #else
+ 		pid = daemonize();
+ #endif
+ 	}
+ 
+-	openlog_option = LOG_PID|LOG_CONS;
++	openlog_option = LOG_PID;
+ 	if(debug_flag)
+ 	{
+ 		openlog_option |= LOG_PERROR;	/* also log on stderr */
+ 	}
+ 
+ 	openlog("miniupnpd", openlog_option, LOG_MINIUPNPD);
+ 
